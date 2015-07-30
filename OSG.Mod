@@ -1,21 +1,19 @@
-MODULE OSG; (* NW 18.12.94 / 10.2.95 / 24.3.96*)
-  IMPORT Oberon, Texts, OSS, RISC;
+MODULE OSG; (* NW 19.12.94 / 20.10.07 / 26.10.2013*) 
+  IMPORT SYSTEM, Files, Texts, Oberon, OSS, RISC;
 
-  CONST maxCode = 1000; maxRel = 200; NofCom = 16;
+  CONST MemSize = 8192;
     (* class / mode*) Head* = 0;
-      Var* = 1; Par* = 2; Const* = 3; Fld* = 4; Typ* = 5; Proc* = 6; SProc* = 7;
-      Reg = 10; Cond = 11;
+    Const* = 1; Var* = 2; Par* = 3; Fld* = 4; Typ* = 5;
+    SProc* = 6; SFunc* = 7; Proc* = 8; NoTyp* = 9; Reg = 10; RegI = 11; Cond = 12;
+    SB = 13; SP = 14; LNK = 15;   (*reserved registers*)
     (* form *) Boolean* = 0; Integer* = 1; Array* = 2; Record* = 3;
 
-    ADD = 0; SUB = 1; MUL = 2; Div = 3; Mod = 4; CMP = 5;
-    Or = 8; AND = 9; BIC = 10; XOR = 11; LSH = 12; ASH1 = 13; CHK = 14;
-    ADDI = 16; SUBI = 17; MULI = 18; DIVI = 19; MODI = 20; CMPI = 21;
-    ORI = 24; ANDI = 25; BICI = 26; XORI = 27; LSHI = 28; ASHI = 29; CHKI = 30;
-    LDW = 32; LDB = 33; POP = 34; STW = 36; STB = 37; PSH = 38;
-    BEQ = 40; BNE = 41; BLT = 42; BGE = 43; BLE = 44; BGT = 45; BSR = 46;
-    JSR = 48; RET = 49; RD = 50; WRD= 51; WRH = 52; WRL = 53;
-
-    FP = 29; SP = 30; LNK = 31;   (*reserved registers*)
+  (*frequently used opcodes*)  U = 2000H;
+    Mov = 0; Lsl = 1; Asr = 2; Ror= 3; And = 4; Ann = 5; Ior = 6; Xor = 7;
+    Add = 8; Sub = 9; Cmp = 9; Mul = 10; Div = 11;
+    Ldw = 0; Stw = 2;
+    BR = 0; BLR = 1; BC = 2; BL = 3;
+    MI = 0; PL = 8; EQ = 1; NE = 9; LT = 5; GE = 13; LE = 6; GT = 14;
 
   TYPE Object* = POINTER TO ObjDesc;
     Type* = POINTER TO TypeDesc;
@@ -23,7 +21,7 @@ MODULE OSG; (* NW 18.12.94 / 10.2.95 / 24.3.96*)
     Item* = RECORD
       mode*, lev*: INTEGER;
       type*: Type;
-      a*, b, c, r: LONGINT;
+      a*, b, r: LONGINT
     END ;
 
     ObjDesc*= RECORD
@@ -31,414 +29,465 @@ MODULE OSG; (* NW 18.12.94 / 10.2.95 / 24.3.96*)
       next*, dsc*: Object;
       type*: Type;
       name*: OSS.Ident;
-      val*: LONGINT
+      val*, nofpar*: LONGINT
     END ;
 
     TypeDesc* = RECORD
       form*: INTEGER;
-      fields*: Object;
+      dsc*: Object;
       base*: Type;
-      size*, len*: INTEGER
+      size*, len*, nofpar*: LONGINT
     END ;
   
   VAR boolType*, intType*: Type;
     curlev*, pc*: INTEGER;
-    relx, cno: INTEGER;
     entry, fixlist: LONGINT;
-    regs: SET; (* used registers *)
+    RH: LONGINT;  (*register stack pointer*)
     W: Texts.Writer;
-    code: ARRAY maxCode OF LONGINT;
-    rel: ARRAY maxRel OF INTEGER;
-    comname: ARRAY NofCom OF OSS.Ident;  (*commands*)
-    comadr: ARRAY NofCom OF LONGINT;
-    mnemo: ARRAY 54, 5 OF CHAR;  (*for decoder*)
+    relmap: ARRAY 6 OF INTEGER;
+    code*: ARRAY MemSize OF LONGINT;
+    mnemo0, mnemo1: ARRAY 16, 4 OF CHAR;  (*for decoder*)
 
-  PROCEDURE GetReg(VAR r: LONGINT);
-    VAR i: INTEGER;
-  BEGIN i := 1;
-    WHILE (i < FP) & (i IN regs) DO INC(i) END ;
-    INCL(regs, i); r := i
-  END GetReg;
+  PROCEDURE Put0(op, a, b, c: LONGINT);
+  BEGIN (*emit format-0 instruction*)
+    code[pc] := ((a*10H + b) * 10H + op) * 10000H + c; INC(pc)
+  END Put0;
 
-  PROCEDURE Put(op, a, b, c: LONGINT);
-  BEGIN (*emit instruction*)
-    IF op >= 32 THEN DEC(op, 64) END ;
-    code[pc] := ASH(ASH(ASH(op, 5) + a, 5) + b, 16) + (c MOD 10000H);
-    INC(pc)
-  END Put;
+  PROCEDURE Put1(op, a, b, im: LONGINT);
+  BEGIN (*emit format-1 instruction*)
+    IF im < 0 THEN INC(op, 1000H) END ;  (*set v-bit*)
+    code[pc] := (((a+40H) * 10H + b) * 10H + op) * 10000H + (im MOD 10000H); INC(pc)
+  END Put1;
+
+  PROCEDURE Put2(op, a, b, off: LONGINT);
+  BEGIN (*emit load/store instruction*)
+    code[pc] := (((op+8) * 10H + a) * 10H + b) * 100000H + (off MOD 10000H); INC(pc)
+  END Put2;
+
+  PROCEDURE Put3(op, cond, off: LONGINT);
+  BEGIN (*emit branch instruction*)
+    code[pc] := ((op+12) * 10H + cond) * 1000000H + (off MOD 1000000H); INC(pc)
+  END Put3;
+
+  PROCEDURE incR;
+  BEGIN
+    IF RH < SB THEN INC(RH) ELSE OSS.Mark("register stack overflow") END
+  END incR;
+
+  PROCEDURE CheckRegs*;
+  BEGIN
+    IF RH # 0 THEN
+    (*  Texts.WriteString(W, "RegStack!"); Texts.WriteInt(W, R, 4);
+      Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf) *)
+      OSS.Mark("Reg Stack"); RH := 0
+    END
+  END CheckRegs;
+
+  PROCEDURE SetCC(VAR x: Item; n: LONGINT);
+  BEGIN x.mode := Cond; x.a := 0; x.b := 0; x.r := n
+  END SetCC;
 
   PROCEDURE TestRange(x: LONGINT);
   BEGIN (*16-bit entity*)
-    IF (x >= 8000H) OR (x < -8000H) THEN OSS.Mark("value too large") END
+    IF (x > 0FFFFH) OR (x < -10000H) THEN OSS.Mark("value too large") END
   END TestRange;
-
-  PROCEDURE load(VAR x: Item);
-    VAR r: LONGINT;
-  BEGIN (*x.mode # Reg*)
-    IF x.mode = Var THEN
-      IF x.lev = 0 THEN rel[relx] := SHORT(pc); INC(relx) END ;
-      GetReg(r); Put(LDW, r, x.r, x.a); EXCL(regs, x.r); x.r := r
-    ELSIF x.mode = Const THEN
-      IF x.a = 0 THEN x.r := 0 ELSE TestRange(x.a); GetReg(x.r); Put(ADDI, x.r, 0, x.a) END
-    END ;
-    x.mode := Reg
-  END load;
-
-  PROCEDURE loadBool(VAR x: Item);
-  BEGIN
-    IF x.type.form # Boolean THEN OSS.Mark("Boolean?") END ;
-    load(x); x.mode := Cond; x.a := 0; x.b := 0; x.c := 1
-  END loadBool;
-
-  PROCEDURE PutOp(cd: LONGINT; VAR x, y: Item);
-    VAR r: LONGINT;
-  BEGIN
-    IF x.mode # Reg THEN load(x) END ;
-    IF x.r = 0 THEN GetReg(x.r); r := 0 ELSE r := x.r END ;
-    IF y.mode = Const THEN TestRange(y.a); Put(cd+16, r, x.r, y.a)
-    ELSE
-      IF y.mode # Reg THEN load(y) END ;
-      Put(cd, x.r, r, y.r); EXCL(regs, y.r) 
-    END
-  END PutOp;
 
   PROCEDURE negated(cond: LONGINT): LONGINT;
   BEGIN
-    IF ODD(cond) THEN RETURN cond-1 ELSE RETURN cond+1 END
+    IF cond < 8 THEN cond := cond+8 ELSE cond := cond-8 END ;
+    RETURN cond
   END negated;
+
+  PROCEDURE fix(at, with: LONGINT);
+  BEGIN code[at] := code[at] DIV 1000000H * 1000000H + (with MOD 1000000H)
+  END fix;
+
+  PROCEDURE FixLink*(L: LONGINT);
+    VAR L1: LONGINT;
+  BEGIN 
+    WHILE L # 0 DO
+      IF L < MemSize THEN L1 := code[L] MOD 40000H; fix(L, pc-L-1); L := L1 END
+    END
+  END FixLink;
+  
+  PROCEDURE load(VAR x: Item);
+  BEGIN
+    IF x.mode # Reg THEN
+      IF x.mode = Var THEN
+        IF x.r > 0 THEN (*local*) Put2(Ldw, RH, SP, x.a) ELSE Put2(Ldw, RH, SB, x.a) END ;
+        x.r := RH; incR
+      ELSIF x.mode = Par THEN Put2(Ldw, RH, x.r, x.a); Put2(Ldw, RH, RH, 0); x.r := RH; incR
+      ELSIF x.mode = Const THEN
+        IF (x.a >= 10000H) OR (x.a < -10000H) THEN OSS.Mark("const too large") END ;
+        Put1(Mov, RH, 0, x.a); x.r := RH; incR
+      ELSIF x.mode = RegI THEN Put2(Ldw, x.r, x.r, x.a)
+      ELSIF x.mode = Cond THEN
+        Put3(2, negated(x.r), 2);
+        FixLink(x.b); Put1(Mov, RH, 0, 1); Put3(2, 7, 1);
+        FixLink(x.a); Put1(Mov, RH, 0, 0); x.r := RH; incR
+      END ;
+      x.mode := Reg
+    END
+  END load;
+
+  PROCEDURE loadAdr(VAR x: Item);
+  BEGIN
+    IF x.mode = Var THEN
+      IF x.r > 0 THEN (*local*) Put1(Add, RH, SP, x.a); x.r := RH ELSE Put1(Add, RH, SB, x.a) END ;
+      incR
+    ELSIF x.mode = Par THEN Put2(Ldw, RH, SP, x.a); Put1(Add, RH, RH, x.b); x.r := RH; incR
+    ELSIF (x.mode = RegI) & (x.a # 0) THEN Put1(Add, x.r, x.r, x.a)
+    ELSE OSS.Mark("address error") 
+    END ;
+    x.mode := Reg
+  END loadAdr;
+
+  PROCEDURE loadCond(VAR x: Item);
+  BEGIN
+    IF x.type.form = Boolean THEN
+      IF x.mode = Const THEN x.r := 15 - x.a*8 ELSE load(x); Put1(Cmp, x.r, x.r, 0); x.r := NE; DEC(RH) END ;
+      x.mode := Cond; x.a := 0; x.b := 0
+    ELSE OSS.Mark("not Boolean")
+    END
+  END loadCond;
 
   PROCEDURE merged(L0, L1: LONGINT): LONGINT;
     VAR L2, L3: LONGINT;
   BEGIN 
     IF L0 # 0 THEN
-      L2 := L0;
-      LOOP L3 := code[L2] MOD 10000H;
-        IF L3 = 0 THEN EXIT END ;
-        L2 := L3
-      END ;
-      code[L2] := code[L2] - L3 + L1; RETURN L0
-    ELSE RETURN L1
-    END
+      L3 := L0;
+      REPEAT L2 := L3; L3 := code[L2] MOD 40000H UNTIL L3 = 0;
+      code[L2] := code[L2] + L1; L1 := L0
+    END ;
+    RETURN L1
   END merged;
 
-  PROCEDURE fix(at, with: LONGINT);
-  BEGIN code[at] := code[at] DIV 10000H * 10000H + (with MOD 10000H)
-  END fix;
-
-  PROCEDURE FixWith(L0, L1: LONGINT);
-    VAR L2: LONGINT;
-  BEGIN 
-    WHILE L0 # 0 DO L2 := code[L0] MOD 10000H; fix(L0, L1-L0); L0 := L2 END
-  END FixWith;
-
-  PROCEDURE FixLink*(L: LONGINT);
-    VAR L1: LONGINT;
-  BEGIN 
-    WHILE L # 0 DO L1 := code[L] MOD 10000H; fix(L, pc-L); L := L1 END
-  END FixLink;
-  
   (*-----------------------------------------------*)
 
   PROCEDURE IncLevel*(n: INTEGER);
-  BEGIN INC(curlev, n)
+  BEGIN curlev := curlev + n
   END IncLevel;
 
   PROCEDURE MakeConstItem*(VAR x: Item; typ: Type; val: LONGINT);
   BEGIN x.mode := Const; x.type := typ; x.a := val
   END MakeConstItem;
 
-  PROCEDURE MakeItem*(VAR x: Item; y: Object);
+  PROCEDURE MakeItem*(VAR x: Item; y: Object; curlev: LONGINT);
     VAR r: LONGINT;
-  BEGIN x.mode := y.class; x.type := y.type; x.lev := y.lev; x.a := y.val;
-    IF y.lev = 0 THEN x.r := 0
-    ELSIF y.lev = curlev THEN x.r := FP
-    ELSE OSS.Mark("level!"); x.r := 0
-    END ;
-    IF y.class = Par THEN GetReg(r); Put(LDW, r, x.r, x.a); x.mode := Var; x.r := r; x.a := 0 END
+  BEGIN x.mode := y.class; x.type := y.type; x.a := y.val; x.r := y.lev;
+    IF y.class = Par THEN x.b := 0 END ;
+    IF (y.lev > 0) & (y.lev # curlev) & (y.class # Const) THEN OSS.Mark("level error") END
   END MakeItem;
 
   PROCEDURE Field*(VAR x: Item; y: Object);   (* x := x.y *)
-  BEGIN INC(x.a, y.val); x.type := y.type
+  BEGIN
+    IF (x.mode = Var) OR (x.mode = RegI) THEN x.a := x.a + y.val
+    ELSIF x.mode = Par THEN Put2(Ldw, RH, x.r, x.a); x.mode := RegI; x.r := RH; x.a := y.val; incR
+    END
   END Field;
 
   PROCEDURE Index*(VAR x, y: Item);   (* x := x[y] *)
+    VAR s: LONGINT;
   BEGIN
-    IF y.type # intType THEN OSS.Mark("index not integer") END ;
     IF y.mode = Const THEN
       IF (y.a < 0) OR (y.a >= x.type.len) THEN OSS.Mark("bad index") END ;
-      INC(x.a, y.a * x.type.base.size)
-    ELSE
+      IF x.mode = Par THEN Put2(Ldw, RH, x.r, x.a); x.mode := RegI; x.a := 0 END ;
+      x.a := x.a + y.a * x.type.base.size
+    ELSE s := x.type.base.size;
       IF y.mode # Reg THEN load(y) END ;
-      Put(CHKI, y.r, 0, x.type.len);
-      Put(MULI, y.r, y.r, x.type.base.size);
-      IF x.r # 0 THEN Put(ADD, y.r, x.r, y.r); EXCL(regs, x.r) END ;
-      x.r := y.r
-    END;
-    x.type := x.type.base
+      IF s = 4 THEN Put1(Lsl, y.r, y.r, 2) ELSE Put1(Mul, y.r, y.r, s) END ;
+      IF x.mode = Var THEN
+        IF x.r > 0 THEN Put0(Add, y.r, SP, y.r) ELSE Put0(Add, y.r, SB, y.r) END ;
+        x.mode := RegI; x.r := y.r
+      ELSIF x.mode = Par THEN
+        Put2(Ldw, RH, SP, x.a); Put0(Add, y.r, RH, y.r); x.mode := RegI; x.r := y.r
+      ELSIF x.mode = RegI THEN Put0(Add, x.r, x.r, y.r); DEC(RH)
+      END
+    END
   END Index;
   
-  PROCEDURE Op1*(op: INTEGER; VAR x: Item);   (* x := op x *)
+  (* Code generation for Boolean operators *)
+
+  PROCEDURE Not*(VAR x: Item);   (* x := ~x *)
     VAR t: LONGINT;
   BEGIN
-    IF op = OSS.minus THEN
-      IF x.type.form # Integer THEN OSS.Mark("bad type")
-      ELSIF x.mode = Const THEN x.a := -x.a
-      ELSE
-        IF x.mode = Var THEN load(x) END ;
-        Put(SUB, x.r, 0, x.r)
-      END
-    ELSIF op = OSS.not THEN
-      IF x.mode # Cond THEN loadBool(x) END ;
-      x.c := negated(x.c); t := x.a; x.a := x.b; x.b := t
-    ELSIF op = OSS.and THEN
-      IF x.mode # Cond THEN loadBool(x) END ;
-      Put(BEQ + negated(x.c), x.r, 0, x.a); EXCL(regs, x.r); x.a := pc-1; FixLink(x.b); x.b := 0
-    ELSIF op = OSS.or THEN
-      IF x.mode # Cond THEN loadBool(x) END ;
-      Put(BEQ + x.c, x.r, 0, x.b); EXCL(regs, x.r); x.b := pc-1; FixLink(x.a); x.a := 0
-    END
-  END Op1;
+    IF x.mode # Cond THEN loadCond(x) END ;
+    x.r := negated(x.r); t := x.a; x.a := x.b; x.b := t
+  END Not;
 
-  PROCEDURE Op2*(op: INTEGER; VAR x, y: Item);   (* x := x op y *)
+  PROCEDURE And1*(VAR x: Item);   (* x := x & *)
   BEGIN
-    IF (x.type.form = Integer) & (y.type.form = Integer) THEN
+    IF x.mode # Cond THEN loadCond(x) END ;
+    Put3(BC, negated(x.r), x.a); x.a := pc-1; FixLink(x.b); x.b := 0
+  END And1;
+
+  PROCEDURE And2*(VAR x, y: Item);
+  BEGIN
+    IF y.mode # Cond THEN loadCond(y) END ;
+    x.a := merged(y.a, x.a); x.b := y.b; x.r := y.r
+  END And2;
+
+  PROCEDURE Or1*(VAR x: Item);   (* x := x OR *)
+  BEGIN
+    IF x.mode # Cond THEN loadCond(x) END ;
+    Put3(BC, x.r, x.b);  x.b := pc-1; FixLink(x.a); x.a := 0
+  END Or1;
+
+  PROCEDURE Or2*(VAR x, y: Item);
+  BEGIN
+    IF y.mode # Cond THEN loadCond(y) END ;
+    x.a := y.a; x.b := merged(y.b, x.b); x.r := y.r
+  END Or2;
+
+  (* Code generation for arithmetic operators *)
+
+  PROCEDURE Neg*(VAR x: Item);   (* x := -x *)
+  BEGIN
+    IF x.mode = Const THEN x.a := -x.a
+    ELSE load(x); Put1(Mov, RH, 0, 0); Put0(Sub, x.r, RH, x.r)
+    END
+  END Neg;
+
+  PROCEDURE AddOp*(op: LONGINT; VAR x, y: Item);   (* x := x +- y *)
+  BEGIN
+    IF op = OSS.plus THEN
+      IF (x.mode = Const) & (y.mode = Const) THEN x.a := x.a + y.a
+      ELSIF y.mode = Const THEN load(x);
+        IF y.a # 0 THEN Put1(Add, x.r, x.r, y.a) END
+      ELSE load(x); load(y); Put0(Add, RH-2, x.r, y.r); DEC(RH); x.r := RH-1
+      END
+    ELSE (*op = OSS.minus*)
+      IF (x.mode = Const) & (y.mode = Const) THEN x.a := x.a - y.a
+      ELSIF y.mode = Const THEN load(x);
+        IF y.a # 0 THEN Put1(Sub, x.r, x.r, y.a) END
+      ELSE load(x); load(y); Put0(Sub, RH-2, x.r, y.r); DEC(RH); x.r := RH-1
+      END
+    END
+  END AddOp;
+
+  PROCEDURE MulOp*(VAR x, y: Item);   (* x := x * y *)
+  BEGIN
+    IF (x.mode = Const) & (y.mode = Const) THEN x.a := x.a * y.a
+    ELSIF (y.mode = Const) & (y.a = 2) THEN load(x); Put1(Lsl, x.r, x.r, 1)
+    ELSIF y.mode = Const THEN load(x); Put1(Mul, x.r, x.r, y.a)
+    ELSIF x.mode = Const THEN load(y); Put1(Mul, y.r, y.r, x.a); x.mode := Reg; x.r := y.r
+    ELSE load(x); load(y); Put0(Mul, RH-2, x.r, y.r); DEC(RH); x.r := RH-1
+    END
+  END MulOp;
+
+  PROCEDURE DivOp*(op: LONGINT; VAR x, y: Item);   (* x := x op y *)
+  BEGIN
+    IF op = OSS.div THEN
       IF (x.mode = Const) & (y.mode = Const) THEN
-        (*overflow checks missing*)
-        IF op = OSS.plus THEN INC(x.a, y.a)
-        ELSIF op = OSS.minus THEN DEC(x.a, y.a)
-        ELSIF op = OSS.times THEN x.a := x.a * y.a
-        ELSIF op = OSS.div THEN x.a := x.a DIV y.a
-        ELSIF op = OSS.mod THEN x.a := x.a MOD y.a
-        ELSE OSS.Mark("bad type")
-        END
-      ELSE
-        IF op = OSS.plus THEN PutOp(ADD, x, y)
-        ELSIF op = OSS.minus THEN PutOp(SUB, x, y)
-        ELSIF op = OSS.times THEN PutOp(MUL, x, y)
-        ELSIF op = OSS.div THEN PutOp(Div, x, y)
-        ELSIF op = OSS.mod THEN PutOp(Mod, x, y)
-        ELSE OSS.Mark("bad type")
-        END
+        IF y.a > 0 THEN x.a := x.a DIV y.a ELSE OSS.Mark("bad divisor") END
+      ELSIF (y.mode = Const) & (y.a = 2) THEN load(x); Put1(Asr, x.r, x.r, 1)
+      ELSIF y.mode = Const THEN
+        IF y.a > 0 THEN load(x); Put1(Div, x.r, x.r, y.a) ELSE OSS.Mark("bad divisor") END
+      ELSE load(y); load(x); Put0(Div, RH-2, x.r, y.r); DEC(RH); x.r := RH-1
       END
-    ELSIF (x.type.form = Boolean) & (y.type.form = Boolean) THEN
-      IF y.mode # Cond THEN loadBool(y) END ;
-      IF op = OSS.or THEN x.a := y.a; x.b := merged(y.b, x.b); x.c := y.c
-      ELSIF op = OSS.and THEN x.a := merged(y.a, x.a); x.b := y.b; x.c := y.c
+    ELSE (*op = OSS.mod*)
+      IF (x.mode = Const) & (y.mode = Const) THEN
+        IF y.a > 0 THEN x.a := x.a MOD y.a ELSE OSS.Mark("bad modulus") END
+      ELSIF (y.mode = Const) & (y.a = 2) THEN load(x); Put1(And, x.r, x.r, 1)
+      ELSIF y.mode = Const THEN
+        IF y.a > 0 THEN load(x); Put1(Div, x.r, x.r, y.a); Put0(Mov+U, x.r, 0, 0) ELSE OSS.Mark("bad modulus") END
+      ELSE load(y); load(x); Put0(Div, RH-2, x.r, y.r); Put0(Mov+U, RH-2, 0, 0); DEC(RH); x.r := RH-1
       END
-    ELSE OSS.Mark("bad type")
-    END ;
-  END Op2;
+    END
+  END DivOp;
 
   PROCEDURE Relation*(op: INTEGER; VAR x, y: Item);   (* x := x ? y *)
   BEGIN
-    IF (x.type.form # Integer) OR (y.type.form # Integer) THEN OSS.Mark("bad type") 
-    ELSE
-      IF (y.mode = Const) & (y.a = 0) THEN load(x) ELSE PutOp(CMP, x, y) END ;
-      x.c := op - OSS.eql; EXCL(regs, y.r)
+    IF y.mode = Const THEN load(x); Put1(Cmp, x.r, x.r, y.a); DEC(RH)
+    ELSE load(x); load(y); Put0(Cmp, x.r, x.r, y.r); DEC(RH, 2)
     END ;
-    x.mode := Cond; x.type := boolType; x.a := 0; x.b := 0
+    SetCC(x, relmap[op - OSS.eql])
   END Relation;
   
   PROCEDURE Store*(VAR x, y: Item); (* x := y *)
-    VAR r: LONGINT;
-  BEGIN
-    IF (x.type.form IN {Boolean, Integer}) & (x.type.form = y.type.form) THEN
-      IF y.mode = Cond THEN
-        Put(BEQ + negated(y.c), y.r, 0, y.a); EXCL(regs, y.r); y.a := pc-1;
-        FixLink(y.b); GetReg(y.r); Put(ADDI, y.r, 0, 1); Put(BEQ, 0, 0, 2);
-        FixLink(y.a); Put(ADDI, y.r, 0, 0)
-      ELSIF y.mode # Reg THEN load(y)
-      END ;
-      IF x.mode = Var THEN
-        IF x.lev = 0 THEN rel[relx] := SHORT(pc); INC(relx) END ;
-        Put(STW, y.r, x.r, x.a)
-      ELSE OSS.Mark("illegal assignment")
-      END ;
-      EXCL(regs, x.r); EXCL(regs, y.r)
-    ELSE OSS.Mark("incompatible assignment")
-    END
+  BEGIN load(y);
+    IF x.mode = Var THEN
+      IF x.r > 0 THEN (*local*) Put2(Stw, y.r, SP, x.a) ELSE Put2(Stw, y.r, SB, x.a) END
+    ELSIF x.mode = Par THEN Put2(Ldw, RH, SP, x.a); Put2(Stw, y.r, RH, x.b)
+    ELSIF x.mode = RegI THEN Put2(Stw, y.r, x.r, x.a); DEC(RH)
+    ELSE OSS.Mark("illegal assignment")
+    END ;
+    DEC(RH)
   END Store;
 
-  PROCEDURE Parameter*(VAR x: Item; ftyp: Type; class: INTEGER);
-    VAR r: LONGINT;
-  BEGIN
-    IF x.type = ftyp THEN
-      IF class = Par THEN (*Var param*)
-        IF x.mode = Var THEN
-          IF x.a # 0 THEN
-            IF x.lev = 0 THEN rel[relx] := SHORT(pc); INC(relx) END ;
-            GetReg(r); Put(ADDI, r, x.r, x.a)
-          ELSE r := x.r
-          END
-        ELSE OSS.Mark("illegal parameter mode")
-        END ;
-        Put(PSH, r, SP, 4); EXCL(regs, r)
-      ELSE (*value param*)
-        IF x.mode # Reg THEN load(x) END ;
-        Put(PSH, x.r, SP, 4); EXCL(regs, x.r)
-      END
-    ELSE OSS.Mark("bad parameter type")
+  PROCEDURE VarParam*(VAR x: Item; ftype: Type);
+    VAR xmd: INTEGER;
+  BEGIN xmd := x.mode; loadAdr(x);
+    IF (ftype.form = Array) & (ftype.len < 0) THEN (*open array*)
+      IF x.type.len >= 0 THEN Put1(Mov, RH, 0, x.type.len) ELSE  Put2(Ldw, RH, SP, x.a+4) END ;
+      incR
+    ELSIF ftype.form = Record THEN
+      IF xmd = Par THEN Put2(Ldw, RH, SP, x.a+4); incR END
     END
-  END Parameter;
-  
+  END VarParam;
+
+  PROCEDURE ValueParam*(VAR x: Item);
+  BEGIN load(x)
+  END ValueParam;
+
+  PROCEDURE OpenArrayParam*(VAR x: Item);
+  BEGIN loadAdr(x);
+    IF x.type.len >= 0 THEN Put1(Mov, RH, 0, x.type.len) ELSE Put2(Ldw, RH, SP, x.a+4) END ;
+    incR
+  END OpenArrayParam;
+
   (*---------------------------------*)
-    
-  PROCEDURE CJump*(VAR x: Item);
+  
+  PROCEDURE CFJump*(VAR x: Item);  (*conditional forward jump*)
   BEGIN
-    IF x.type.form = Boolean THEN
-      IF x.mode # Cond THEN loadBool(x) END ;
-      Put(BEQ + negated(x.c), x.r, 0, x.a); EXCL(regs, x.r); FixLink(x.b); x.a := pc-1
-    ELSE OSS.Mark("Boolean?"); x.a := pc 
-    END
-  END CJump;
-  
-  PROCEDURE BJump*(L: LONGINT);
-  BEGIN Put(BEQ, 0, 0, L-pc)
-  END BJump;
-  
-  PROCEDURE FJump*(VAR L: LONGINT);
-  BEGIN Put(BEQ, 0, 0, L); L := pc-1
+    IF x.mode # Cond THEN loadCond(x) END ;
+    Put3(2, negated(x.r), x.a); FixLink(x.b); x.a := pc-1
+  END CFJump;
+
+  PROCEDURE FJump*(VAR L: LONGINT);  (*unconditional forward jump*)
+  BEGIN Put3(2, 7, L); L := pc-1
   END FJump;
+
+  PROCEDURE CBJump*(VAR x: Item; L: LONGINT);  (*conditional backward jump*)
+  BEGIN
+    IF x.mode # Cond THEN loadCond(x) END ;
+    Put3(2, negated(x.r), L-pc-1)
+  END CBJump;
   
-  PROCEDURE Call*(VAR x: Item);
-  BEGIN Put(BSR, 0, 0, x.a - pc)
+  PROCEDURE BJump*(L: LONGINT);  (*unconditional backward jump*)
+  BEGIN Put3(2, 7, L-pc-1)
+  END BJump;
+
+  PROCEDURE Call*(VAR obj: Object);
+  BEGIN Put3(3, 7, obj.val - pc-1); RH := 0
   END Call;
 
-  PROCEDURE IOCall*(VAR x, y: Item);
-    VAR z: Item;
-  BEGIN
-    IF x.a < 4 THEN
-      IF y.type.form # Integer THEN OSS.Mark("Integer?") END
-    END ;
-    IF x.a = 1 THEN
-      GetReg(z.r); z.mode := Reg; z.type := intType; Put(RD, z.r, 0, 0); Store(y, z)
-    ELSIF x.a = 2 THEN load(y); Put(WRD, 0, 0, y.r); EXCL(regs, y.r)
-    ELSIF x.a = 3 THEN load(y); Put(WRH, 0, 0, y.r); EXCL(regs, y.r)
-    ELSE Put(WRL, 0, 0, 0)
-    END
-  END IOCall;
+  PROCEDURE Enter*(parblksize, locblksize: LONGINT);
+    VAR a, r: LONGINT;
+  BEGIN a := 4; r := 0; Put1(Sub, SP, SP, locblksize); Put2(Stw, LNK, SP, 0);
+    WHILE a < parblksize DO Put2(Stw, r, SP, a); INC(r); INC(a, 4) END
+  END Enter;
+
+  PROCEDURE Return*(size: LONGINT);
+  BEGIN Put2(Ldw, LNK, SP, 0); Put1(Add, SP, SP, size); Put3(BR, 7, LNK); RH := 0
+  END Return;
+
+  PROCEDURE Ord*(VAR x: Item);
+  BEGIN load(x); x.type := intType
+  END Ord;
+
+  PROCEDURE ReadInt*(VAR x: Item);
+  BEGIN loadAdr(x); Put1(Mov, RH, 0, -4); Put2(Ldw, RH, RH, 0); Put2(Stw, RH, x.r, 0); DEC(RH)
+  END ReadInt;
+
+  PROCEDURE eot*(VAR x: Item);
+  BEGIN Put1(Mov, RH, 0, -8); Put2(Ldw, RH, RH, 0); SetCC(x, EQ)
+  END eot;
+
+  PROCEDURE WriteInt*(VAR x: Item);
+  BEGIN load(x); Put1(Mov, RH, 0, -4); Put2(Stw, x.r, RH, 0); DEC(RH)
+  END WriteInt;
+
+  PROCEDURE WriteChar*(VAR x: Item);
+  BEGIN load(x); Put1(Mov, RH, 0, -8); Put2(Stw, x.r, RH, 0); DEC(RH)
+  END WriteChar;
+
+  PROCEDURE WriteLn*;
+  BEGIN Put1(Mov, RH, 0, -12); Put2(Stw, RH, RH, 0)
+  END WriteLn;
+
+  PROCEDURE Open*;
+  BEGIN curlev := 0; pc := 0; RH := 0; Put3(2, 7, 0)
+  END Open;
 
   PROCEDURE Header*(size: LONGINT);
-  BEGIN entry := pc; Put(ADDI, SP, 0, RISC.MemSize - size);  (*init SP*)
-    Put(PSH, LNK, SP, 4)
+  BEGIN entry := pc; fix(0, pc-1)
   END Header;
-  
-  PROCEDURE Enter*(size: LONGINT);
-  BEGIN
-    Put(PSH, LNK, SP, 4);
-    Put(PSH, FP, SP, 4);
-    Put(ADD, FP, 0, SP);
-    Put(SUBI, SP, SP, size)
-  END Enter;
-  
-  PROCEDURE Return*(size: LONGINT);
-  BEGIN
-    Put(ADD, SP, 0, FP);
-    Put(POP, FP, SP, 4);
-    Put(POP, LNK, SP, size+4);
-    Put(RET, 0, 0, LNK)
-  END Return;
-  
-  PROCEDURE Open*;
-  BEGIN curlev := 0; pc := 0; relx := 0; cno := 0; regs := {}
-  END Open;
-  
-  PROCEDURE Close*(VAR S: Texts.Scanner; globals: LONGINT);
-  BEGIN Put(POP, LNK, SP, 4); Put(RET, 0, 0, LNK);
+
+  PROCEDURE Close*;
+  BEGIN Put1(Mov, 0, 0, 0); Put3(0, 7, 0)
   END Close;
 
-  PROCEDURE EnterCmd*(VAR name: ARRAY OF CHAR);
-  BEGIN COPY(name, comname[cno]); comadr[cno] := pc*4; INC(cno)
-  END EnterCmd;
+  (*-------------------- output -----------------------*)
 
-  (*-------------------------------------------*)
+  PROCEDURE WriteReg(r: LONGINT);
+  BEGIN Texts.Write(W, " ");
+    IF r < 13 THEN Texts.Write(W, "R"); Texts.WriteInt(W, r, 1)
+    ELSIF r = 13 THEN Texts.WriteString(W, "SB")
+    ELSIF r = 14 THEN Texts.WriteString(W, "SP")
+    ELSIF r = 15 THEN Texts.WriteString(W, "LNK")
+    END
+  END WriteReg;
 
-  PROCEDURE Load*(VAR S: Texts.Scanner);
-    VAR i, k: LONGINT;
-  BEGIN i := 0; (*relocate*)
-    WHILE i < relx DO
-      k := rel[i]; INC(i);
-      code[k] := (code[k] DIV 10000H * 10000H) + (code[k] + RISC.MemSize) MOD 10000H
-    END ;
-    RISC.Load(code, pc);
-    Texts.WriteString(W, "  code loaded"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
-    RISC.Execute(entry*4, S, Oberon.Log)
-  END Load;
-
-  PROCEDURE Exec*(VAR S: Texts.Scanner);
-    VAR i: INTEGER;
-  BEGIN i := 0;
-    WHILE (i < cno) & (S.s # comname[i]) DO INC(i) END ;
-    IF i < cno THEN RISC.Execute(comadr[i], S, Oberon.Log) END
-  END Exec;
-
-  PROCEDURE Decode*(T: Texts.Text);
-    VAR i, cd, a: LONGINT;
-  BEGIN Texts.WriteString(W, "entry"); Texts.WriteInt(W, entry*4, 6); Texts.WriteLn(W);
+  PROCEDURE Decode*;
+    VAR i, w, a, b, c, op: LONGINT;
+  BEGIN Texts.WriteHex(W, code[0]); Texts.WriteHex(W, code[1]); Texts.WriteLn(W);
     i := 0;
     WHILE i < pc DO
-      cd := code[i]; a := cd MOD 10000H;
-      IF a >= 8000H THEN DEC(a, 10000H) END ;
-      Texts.WriteInt(W, 4*i, 4); Texts.Write(W, 9X);
-      Texts.WriteString(W, mnemo[cd DIV 4000000H MOD 40H]);
-      Texts.Write(W, 9X); Texts.WriteInt(W, cd DIV 200000H MOD 20H, 4);
-      Texts.Write(W, ","); Texts.WriteInt(W, cd DIV 10000H MOD 20H, 4);
-      Texts.Write(W, ","); Texts.WriteInt(W, a, 8); Texts.WriteLn(W); INC(i)
+      w := code[i];
+      a := w DIV 1000000H MOD 10H;
+      b := w DIV 100000H MOD 10H;
+      Texts.WriteInt(W, i, 4); Texts.WriteHex(W, w); Texts.Write(W, 9X);
+      IF ~ODD(w DIV 80000000H) THEN  (*~p:  register instruction*)
+        op := w DIV 10000H MOD 10H;
+        Texts.WriteString(W, mnemo0[op]); WriteReg(a); WriteReg(b);
+        IF ~ODD(w DIV 40000000H) THEN (*~q*) WriteReg(w MOD 10H)
+        ELSE c := w MOD 10000H;;
+          IF ODD(w DIV 10000000H) THEN (*v*) c := c + 0FFFF0000H END ;
+          Texts.WriteInt(W, c, 8)
+        END
+      ELSIF ~ODD(w DIV 40000000H) THEN  (*load/store*)
+        IF ODD(w DIV 20000000H) THEN Texts.WriteString(W, "STW ") ELSE Texts.WriteString(W, "LDW") END ;
+        WriteReg(a); WriteReg(b); Texts.WriteInt(W, w MOD 100000H, 8)
+      ELSE  (*Branch instr*)
+        Texts.Write(W, "B");
+        IF ODD(w DIV 10000000H) THEN Texts.Write(W, "L") END ;
+        Texts.WriteString(W, mnemo1[a]);
+        IF ~ODD(w DIV 20000000H) THEN WriteReg(w MOD 10H) ELSE
+          w := w MOD 1000000H;
+          IF w >= 800000H THEN w := w - 1000000H END ;
+          Texts.WriteInt(W, w, 8)
+        END
+      END ;
+      Texts.WriteLn(W); INC(i)
     END ;
-    Texts.WriteString(W, "reloc"); Texts.WriteLn(W); i := 0;
-    WHILE i < relx DO
-      Texts.WriteInt(W, rel[i]*4, 5); INC(i);
-      IF i MOD 16 = 0 THEN Texts.WriteLn(W) END
-    END ;
-    Texts.WriteLn(W); Texts.Append(T, W.buf)
+    Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
   END Decode;
+
+  PROCEDURE HexCh(k: LONGINT): CHAR;
+  BEGIN
+    IF k >= 10 THEN INC(k, 27H) END ; 
+    RETURN CHR(k+30H)
+  END HexCh;
+
+  PROCEDURE Execute*;
+    VAR S: Texts.Scanner;
+  BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); RISC.Execute(code, pc, S, W)
+  END Execute;
 
 BEGIN Texts.OpenWriter(W);
   NEW(boolType); boolType.form := Boolean; boolType.size := 4;
   NEW(intType); intType.form := Integer; intType.size := 4;
-  mnemo[ADD] := "ADD ";
-  mnemo[SUB] := "SUB ";
-  mnemo[MUL] := "MUL ";
-  mnemo[Div] := "DIV ";
-  mnemo[Mod] := "MOD ";
-  mnemo[CMP] := "CMP ";
-  mnemo[Or]  := "OR  ";
-  mnemo[AND] := "AND ";
-  mnemo[BIC] := "BIC ";
-  mnemo[XOR] := "XOR ";
-  mnemo[LSH] := "LSH ";
-  mnemo[ASH1] := "ASH ";
-  mnemo[CHK] := "CHK ";
-  mnemo[ADDI] := "ADDI";
-  mnemo[SUBI] := "SUBI";
-  mnemo[MULI] := "MULI";
-  mnemo[DIVI] := "DIVI";
-  mnemo[MODI] := "CMPI";
-  mnemo[CMPI] := "MODI";
-  mnemo[ORI]  := "ORI ";
-  mnemo[ANDI] := "ANDI";
-  mnemo[BICI] := "BICI";
-  mnemo[XORI] := "XORI";
-  mnemo[LSHI] := "LSHI";
-  mnemo[ASHI] := "ASHI";
-  mnemo[CHKI] := "CHKI";
-  mnemo[LDW] := "LDW ";
-  mnemo[LDB] := "LDB ";
-  mnemo[POP] := "POP ";
-  mnemo[STW] := "STW ";
-  mnemo[STB] := "STB ";
-  mnemo[PSH] := "PSH ";
-  mnemo[BEQ] := "BEQ ";
-  mnemo[BNE] := "BNE ";
-  mnemo[BLT] := "BLT ";
-  mnemo[BGE] := "BGE ";
-  mnemo[BLE] := "BLE ";
-  mnemo[BGT] := "BGT ";
-  mnemo[BSR] := "BSR ";
-  mnemo[JSR] := "JSR ";
-  mnemo[RET] := "RET ";
-  mnemo[RD]  := "READ";
-  mnemo[WRD] := "WRD ";
-  mnemo[WRH] := "WRH ";
-  mnemo[WRL] := "WRL ";
+  relmap[0] := EQ; relmap[1] := NE; relmap[2] := LT; relmap[3] := LE; relmap[4] := GT; relmap[5] := GE;
+  mnemo0[Mov] := "MOV";
+  mnemo0[Lsl] := "LSL";
+  mnemo0[Asr] := "ASR";
+  mnemo0[Ror] := "ROR";
+  mnemo0[And] := "AND";
+  mnemo0[Ann] := "ANN";
+  mnemo0[Ior] := "IOR";
+  mnemo0[Xor] := "XOR";
+  mnemo0[Add] := "ADD";
+  mnemo0[Sub] := "SUB";
+  mnemo0[Mul] := "MUL";
+  mnemo0[Div] := "DIV";
+  mnemo1[PL] := "PL ";
+  mnemo1[MI] := "MI ";
+  mnemo1[EQ] := "EQ ";
+  mnemo1[NE] := "NE ";
+  mnemo1[LT] := "LT ";
+  mnemo1[GE] := "GE ";
+  mnemo1[LE] := "LE ";
+  mnemo1[GT] := "GT ";
+  mnemo1[15] := "NO ";
 END OSG.

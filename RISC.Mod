@@ -1,96 +1,78 @@
-MODULE RISC;  (*NW 8.8.94 / 9.2.95*)
+MODULE RISC;     (*NW 22.9.07 / 15.12.2013*)
   IMPORT SYSTEM, Texts, Oberon;
+  CONST
+    MOV = 0; LSL = 1; ASR = 2; ROR = 3; AND = 4; ANN = 5; IOR = 6; XOR = 7;
+    ADD = 8; SUB = 9;  MUL = 10; Div = 11;
 
-  CONST MemSize* = 4096;  (*in bytes*)
-
-    ADD = 0; SUB = 1; MUL = 2; Div = 3; Mod = 4; CMP = 5;
-    Or = 8; AND = 9; BIC = 10; XOR = 11; LSH = 12; ASH1 = 13; CHK = 14;
-    ADDI = 16; SUBI = 17; MULI = 18; DIVI = 19; MODI = 20; CMPI = 21;
-    ORI = 24; ANDI = 25; BICI = 26; XORI = 27; LSHI = 28; ASHI = 29; CHKI = 30;
-    LDW = 32; LDB = 33; POP = 34; STW = 36; STB = 37; PSH = 38;
-    BEQ = 40; BNE = 41; BLT = 42; BGE = 43; BLE = 44; BGT = 45; BSR = 46;
-    JSR = 48; RET = 49; RD = 50; WRD= 51; WRH = 52; WRL = 53;
-
-  VAR PC, IR: LONGINT;
-    R*: ARRAY 32 OF LONGINT;
-    M*: ARRAY MemSize DIV 4 OF LONGINT;
-    W: Texts.Writer;
-
-  (* R[0] = 0, R[30] = SP, R[31] = link *)
-
-  PROCEDURE Execute*(pc0: LONGINT; VAR in: Texts.Scanner; out: Texts.Text);
-    VAR opc, a, b, c, nxt: LONGINT;
-  BEGIN R[31] := 0; PC := pc0 DIV 4;
-    LOOP R[0] := 0; nxt := PC + 1;
-      IR := M[PC];
-      opc := IR DIV 4000000H MOD 40H;
-      a := IR DIV 200000H MOD 20H;
-      b := IR DIV 10000H MOD 20H;
-      c := IR MOD 10000H;
-      IF opc < ADDI THEN c := R[c MOD 20H]
-      ELSIF c >= 8000H THEN DEC(c, 10000H)  (*sign extension*)
-      END ;
-      CASE opc OF
-         ADD, ADDI: R[a] := R[b] + c
-      |  SUB, SUBI, CMP, CMPI: R[a] := R[b] - c
-      |  MUL, MULI: R[a] := R[b] * c
-      |  Div, DIVI: R[a] := R[b] DIV c
-      |  Mod, MODI: R[a] := R[b] MOD c
-      |  Or,  ORI : R[a] := SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, R[b]) + SYSTEM.VAL(SET, c))
-      |  AND, ANDI: R[a] := SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, R[b]) * SYSTEM.VAL(SET, c))
-      |  BIC, BICI: R[a] := SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, R[b]) - SYSTEM.VAL(SET, c))
-      |  XOR, XORI: R[a] := SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, R[b]) / SYSTEM.VAL(SET, c))
-      |  LSH, LSHI: R[a] := SYSTEM.LSH(R[b], c)
-      |  ASH1, ASHI: R[a] := ASH(R[b], c)
-      |  CHK, CHKI:
-        IF (R[a] < 0) OR (R[a] >= c) THEN
-          Texts.WriteString(W, "Trap at "); Texts.WriteInt(W, PC, 2);
-          Texts.WriteLn(W); Texts.Append(out, W.buf); EXIT
+  VAR IR: LONGINT;   (*instruction register*)
+    PC: LONGINT;   (*program counter*)
+    N, Z: BOOLEAN;  (*condition flags*)
+    R: ARRAY 16 OF LONGINT;
+    H: LONGINT;  (*aux register for division*)
+    
+  PROCEDURE Execute*(VAR M: ARRAY OF LONGINT; pc: LONGINT;
+      VAR S: Texts.Scanner; VAR W: Texts.Writer);
+    VAR a, b, op, im: LONGINT;  (*instruction fields*)
+      adr, A, B, C: LONGINT;
+      MemSize: LONGINT;
+  BEGIN PC := 0; R[13] := pc * 4; R[14] := LEN(M)*4;
+    REPEAT (*interpretation cycle*)
+      IR := M[PC]; INC(PC);
+      a := IR DIV 1000000H MOD 10H;
+      b := IR DIV 100000H MOD 10H;
+      op := IR DIV 10000H MOD 10H;
+      im := IR MOD 10000H;
+      IF ~ODD(ASH(IR, -31)) THEN  (*~p:  register instruction*)
+        B := R[b];
+        IF ~ODD(ASH(IR, -30)) THEN (*~q*) C := R[IR MOD 10H]
+        ELSIF ~ODD(ASH(IR, -28)) THEN (*q&~v*) C := im 
+        ELSE (*q&v*) C := im + 0FFFF0000H
+        END ;
+        CASE op OF
+            MOV: IF ~ODD(ASH(IR, -29)) THEN A := C ELSE A := H END |
+            LSL: A := SYSTEM.LSH(B, C) |
+            ASR: A := ASH(B, -C) |
+            ROR: A := SYSTEM.ROT(B, -C) |
+            AND: A := SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, B) * SYSTEM.VAL(SET, C)) |
+            ANN: A := SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, B) - SYSTEM.VAL(SET, C)) |
+            IOR: A := SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, B) + SYSTEM.VAL(SET, C)) |
+            XOR: A := SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, B) / SYSTEM.VAL(SET, C)) |
+            ADD: A := B + C |
+            SUB: A := B - C |
+            MUL: A := B * C |
+            Div: A := B DIV C; H := B MOD C
+         END ;
+         R[a] := A; N := A < 0; Z := A = 0
+      ELSIF ~ODD(ASH(IR, -30)) THEN (*p & ~q: memory instruction*)
+        adr := (R[b] + IR MOD 100000H) DIV 4;
+        IF ~ODD(ASH(IR, -29)) THEN
+          IF adr >= 0 THEN (*load*) R[a] := M[adr]; N := A < 0; Z := A = 0
+          ELSE (*input*)
+            IF adr = -1 THEN (*ReadInt*) Texts.Scan(S); R[a] := S.i;
+            ELSIF adr = -2 THEN (*eot*)  Z := S.class # Texts.Int
+            END 
+          END
+        ELSE
+          IF adr >= 0 THEN (*store*) M[adr] := R[a];
+          ELSE (*output*);
+            IF adr = -1 THEN Texts.WriteInt(W, R[a], 4)
+            ELSIF adr = -2 THEN Texts.Write(W, CHR(R[a] MOD 80H))
+            ELSIF adr = -3 THEN Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+            END
+          END
         END
-
-      |  LDW: R[a] := M[(R[b] + c) DIV 4]
-      |  LDB: R[a] := SYSTEM.LSH(M[(R[b] + c) DIV 4], (R[b] + c) MOD 4 * 8) MOD 100H
-      |  POP: R[a] := M[(R[b]) DIV 4]; INC(R[b], c)
-      |  STW: M[(R[b] + c) DIV 4] := R[a]
-      |  STB: (*not implemented*)
-      |  PSH: DEC(R[b], c); M[(R[b]) DIV 4] := R[a]
-
-      |  BEQ: IF R[a] = R[b] THEN nxt := PC + c END
-      |  BNE: IF R[a] # R[b] THEN nxt := PC + c END
-      |  BLT: IF R[a] < R[b] THEN nxt := PC + c END
-      |  BGE: IF R[a] >= R[b] THEN nxt := PC + c END
-      |  BLE: IF R[a] <= R[b] THEN nxt := PC + c END
-      |  BGT: IF R[a] > R[b] THEN nxt := PC + c END
-      |  BSR: nxt := PC + c; R[31] := (PC+1)*4
-      |  JSR: nxt := IR MOD 4000000H; R[31] := (PC+1)*4
-      |  RET: nxt := R[c MOD 20H] DIV 4; IF nxt = 0 THEN EXIT END
-
-      |  RD:  Texts.Scan(in); R[a] := in.i
-      |  WRD: Texts.Write(W, " "); Texts.WriteInt(W, R[c], 1)
-      |  WRH: Texts.WriteHex(W, R[c])
-      |  WRL: Texts.WriteLn(W); Texts.Append(out, W.buf)
-      END ;
-      PC := nxt
-    END
-  END Execute;
-
-  PROCEDURE Load*(VAR code: ARRAY OF LONGINT; len: LONGINT);
-    VAR i: INTEGER;
-  BEGIN i := 0;
-    WHILE i < len DO M[i] := code[i]; INC(i) END
-  END Load;
-
-  PROCEDURE State*;
-  BEGIN
-    Texts.WriteString(W, "PC="); Texts.WriteInt(W, PC*4, 8); Texts.WriteLn(W);
-    Texts.WriteString(W, "SP="); Texts.WriteInt(W, R[30], 8); Texts.WriteLn(W);
-    Texts.WriteString(W, "FP="); Texts.WriteInt(W, R[29], 8); Texts.WriteLn(W);
-    Texts.WriteString(W, "R1="); Texts.WriteInt(W, R[1], 8); Texts.WriteLn(W);
-    Texts.WriteString(W, "R2="); Texts.WriteInt(W, R[2], 8); Texts.WriteLn(W);
-    Texts.WriteString(W, "R3="); Texts.WriteInt(W, R[3], 8); Texts.WriteLn(W);
-    Texts.WriteString(W, "R4="); Texts.WriteInt(W, R[4], 8); Texts.WriteLn(W);
+      ELSE (* p & q: branch instruction*)
+        IF (a = 0) & N OR (a = 1) & Z OR (a = 5) & N OR (a = 6) & (N OR Z) OR (a = 7) OR
+            (a = 8) & ~N OR (a = 9) & ~Z OR (a = 13) & ~N OR (a = 14) & ~(N OR Z) THEN
+          IF ODD(ASH(IR, -28)) THEN R[15] := PC * 4 END ;
+          IF ODD(ASH(IR, -29)) THEN PC := (PC + (IR MOD 1000000H)) MOD 40000H 
+          ELSE PC := R[IR MOD 10H] DIV 4
+          END
+        END
+      END
+    UNTIL PC = 0;
     Texts.Append(Oberon.Log, W.buf)
-  END State;
-
-BEGIN Texts.OpenWriter(W)
+  END Execute;
 END RISC.
+
+
