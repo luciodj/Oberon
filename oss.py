@@ -51,7 +51,7 @@ class Lexer:
         self.reader = reader    
         self.ch = reader.next()
         # print self.ch, # dbg
-        self.pos = 0 
+        self.value = None
         self.errpos = 0
         self.errcnt = 0
 
@@ -74,8 +74,8 @@ class Lexer:
             ids.append( self.ch)
             self.next()
         ids = ''.join( ids)
-        if ids in KeyTable : return( KeyTable[ ids], None)
-        else: return ( Lex.ident_, ids[: IDLEN])
+        if ids in KeyTable : return KeyTable[ ids]
+        else: self.value = ids[: IDLEN]; return Lex.ident_
 
     def getString( self):
         self.next()
@@ -88,12 +88,12 @@ class Lexer:
         if len( s) > STRINGLEN : 
             self.mark( 'string too long') 
         self.next()
-        return Lex.string_, s[:STRINGLEN]
+        self.value = s[:STRINGLEN]
+        return Lex.string_
 
     def getHexString( self):
-        self.sym = Lex.string_
-        self.strval = ''
         self.next();
+        self.value = ''
         while (self.ch != '') and (self.ch != '$') :
             while self.ch in  ' \x09\x0D': self.next()   # skip blanks
             s = self.ch; self.next()
@@ -101,10 +101,11 @@ class Lexer:
             try:   m = int( s, base = 16)
             except ValueError:
                 self.mark( 'hex dig pair expected')
-            if len(self.strval) < STRINGLEN : 
-                self.strval += chr( m); 
+            if len( self.value) < STRINGLEN : 
+                self.value += chr( m); 
             else: self.mark( 'string too long') 
-        self.next(); 
+        self.next()
+        return Lex.string_
 
     def  Ten( self, e): # returns a REAL;
         x = 1.0 
@@ -116,6 +117,7 @@ class Lexer:
         return x
   
     def getNumber( self):  # returns a tuple (char_/integer_/real_ , ival/rval)
+        self.value = 0
         digits = []
         while self.ch in string.hexdigits:
             digits.append( self.ch)
@@ -126,23 +128,24 @@ class Lexer:
 
         if (self.ch in 'XHR') :  # hex (char, int or real)
             c = self.ch; self.next()
-            try: k = int( s, base=16)
+            try: self.value = int( s, base=16)
             except ValueError: self.mark( 'bad hex digits')
             if c  == 'X': 
-                if k >= 0x100 :  k = 0; self.mark( 'bad char value')
-                return  Lex.char_, k
-            elif c == 'R' :
-                return Lex.real_, 1.0 *  k
+                if self.value >= 0x100 :  self.mark( 'bad char value')
+                return  Lex.char_
+            elif c == 'R' : 
+                self.value *= 1.0
+                return Lex.real_
             else:   # 'H' 
-                return Lex.int_, k
+                return Lex.int_
 
         elif self.ch == "." : 
             self.next();
             if self.ch == "." :     
                 self.ch = chr(0x7f)  # double dot (upto) -> decimal integer
-                try: k = int( s, base=10)
+                try: self.value = int( s, base=10)
                 except ValueError: self.mark( 'bad integer')
-                return  Lex.int_, k
+                return  Lex.int_
 
             else:     # real numbers
                 x = 0.0
@@ -176,12 +179,13 @@ class Lexer:
                 elif e > 0 :
                     if e <= MAXEX : x = self.Ten(e) * x 
                     else:  x = 0.0; self.mark( 'too large')
-                return  Lex.real_, x
+                self.value = x
+                return  Lex.real_
 
         else:   # decimal integer
-            try: k = int( ''.join( digits)) 
+            try: self.value = int( ''.join( digits)) 
             except ValueError : self.mark( 'bad integer')
-            return Lex.int_, k
+            return Lex.int_
 
     def comment( self):
         self.next();
@@ -194,66 +198,67 @@ class Lexer:
             while self.ch == "*" : self.next() 
             if self.ch == ')' or self.ch == '' : break
         if self.ch != '' : self.next() 
-        else: self.mark( "unterminated comment")
+        else: self.mark( 'unterminated comment')
 
     def get( self):   # returns last symbol detected 
+        self.value = None
         while ( self.ch != '') and ( self.ch <= ' ') : self.next()
-        if self.ch == '': return( Lex.eof_, None)
+        if self.ch == '': return Lex.eof_
         if self.ch < 'A' :
             if self.ch < '0' :
                 if   self.ch == '"' : return self.getString()
-                elif self.ch == "#" : self.next(); return( Lex.neq_, None)
+                elif self.ch == "#" : self.next(); return Lex.neq_
                 elif self.ch == "$" : return self.getHexString() 
-                elif self.ch == "&" : self.next(); return( Lex.and_, None)
+                elif self.ch == "&" : self.next(); return Lex.and_
                 elif self.ch == "(" : 
                     self.next(); 
                     if self.ch == "*" : return self.comment()
-                    else: return( Lex.lparen_, None)
-                elif self.ch == ")" : self.next(); return( Lex.rparen_, None)
-                elif self.ch == "*" : self.next(); return( Lex.times_, None)
-                elif self.ch == "+" : self.next(); return( Lex.plus_, None)
-                elif self.ch == "," : self.next(); return( Lex.comma_, None)
-                elif self.ch == "-" : self.next(); return( Lex.minus_, None)
+                    else: return Lex.lparen_
+                elif self.ch == ")" : self.next(); return Lex.rparen_
+                elif self.ch == "*" : self.next(); return Lex.times_
+                elif self.ch == "+" : self.next(); return Lex.plus_
+                elif self.ch == "," : self.next(); return Lex.comma_
+                elif self.ch == "-" : self.next(); return Lex.minus_
                 elif self.ch == "." : 
                     self.next();
-                    if self.ch == "." : self.next(); return( Lex.upto_, None)
-                    else: return (Lex.period_, None)
-                elif self.ch == "/" : self.next(); return( Lex.rdiv_, None)
-                else: self.next();  return( Lex.null_, None)   # ! % ' 
+                    if self.ch == "." : self.next(); return Lex.upto_
+                    else: return Lex.period_
+                elif self.ch == "/" : self.next(); return Lex.rdiv_
+                else: self.next();  return Lex.null_   # ! % ' 
                 
             elif self.ch < ":" : return self.getNumber()
             elif self.ch == ":" : 
                 self.next();
-                if self.ch == "=" : self.next(); return( Lex.becomes_, None)
-                else: return( Lex.colon_, None)
-            elif self.ch == ";" : self.next(); return( Lex.semicolon_, None)
+                if self.ch == "=" : self.next(); return Lex.becomes_
+                else: return Lex.colon_
+            elif self.ch == ";" : self.next(); return Lex.semicolon_
             elif self.ch == "<" :  
                 self.next();
-                if self.ch == "=" : self.next(); return( Lex.leq_, None)
-                else: return( Lex.lss_, None)
-            elif self.ch == "=" : self.next(); return( Lex.eql_, None)
+                if self.ch == "=" : self.next(); return Lex.leq_
+                else: return Lex.lss_
+            elif self.ch == "=" : self.next(); return Lex.eql_
             elif self.ch == ">" : 
                 self.next();
-                if self.ch == "=" : self.next(); return( Lex.geq_, None)
-                else: return( Lex.gtr_, None) 
-            else:  self.next(); return( Lex.null_, None)
+                if self.ch == "=" : self.next(); return Lex.geq_
+                else: return Lex.gtr_ 
+            else:  self.next(); return Lex.null_
 
         elif self.ch < "[" : return self.getIdentifier()
         elif self.ch < "a" :
             c = self.ch; self.next()
-            if   c == "[" : return( Lex.lbrak_, None)
-            elif c == "]" : return( Lex.rbrak_, None)
-            elif c == "^" : return( Lex.arrow_, None)
-            else:  return( Lex.null_, None)         # _ ` 
+            if   c == "[" : return Lex.lbrak_
+            elif c == "]" : return Lex.rbrak_
+            elif c == "^" : return Lex.arrow_
+            else:  return Lex.null_         # _ ` 
 
         elif self.ch < "{" : return self.getIdentifier() 
         else:
             c = self.ch; self.next()
-            if   c == "{" : return( Lex.lbrace_, None)
-            elif c == "}" : return( Lex.rbrace_, None)
-            elif c == "|" : return( Lex.bar_, None)
-            elif c == "~" : return( Lex.not_, None)
-            elif c == 0x7f: return( Lex.upto_, None)
-            else: return( Lex.null_, None)
+            if   c == "{" : return Lex.lbrace_
+            elif c == "}" : return Lex.rbrace_
+            elif c == "|" : return Lex.bar_
+            elif c == "~" : return Lex.not_
+            elif c == 0x7f: return Lex.upto_
+            else: return Lex.null_
             
 

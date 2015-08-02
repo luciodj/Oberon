@@ -210,7 +210,7 @@ MODULE OSP; (* NW 23.9.93 / 20.10.07 / 30.10.2013*)
       IF pno = 0 THEN  OSG.ReadInt(x)
       ELSIF pno = 1 THEN OSG.WriteInt(x)
       ELSIF pno = 2 THEN  OSG.WriteChar(x)
-          ELSE OSS.Mark("no lparen")
+    ELSE OSS.Mark("no lparen")
           END ;
           IF sym = OSS.rparen THEN OSS.Get(sym) ELSE OSS.Mark("no rparen") END ;
         ELSIF pno = 3 THEN OSG.WriteLn

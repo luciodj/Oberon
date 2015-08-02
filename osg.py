@@ -7,12 +7,19 @@ import risc, oss
 from collections import namedtuple
 
 MemSize = 8192
-#  class_ / mode 
-Head = 0; Const = 1; Var = 2; Par = 3; Fld = 4; Typ = 5
-SProc = 6; SFunc = 7; Proc = 8; NoTyp = 9; Reg = 10; RegI = 11; Cond = 12
-SB = 13; SP = 14; LNK = 15;   # reserved registers
-#  form 
-Boolean = 0; Integer = 1; Array = 2; Record = 3;
+WordSize = 4
+
+class eClass:
+    Const, Var, Par, Field, Typ, SProc, SFunc, Proc, NoTyp = range( 9)
+
+class eMode:
+    Reg, RegI, Cond = range( 3)
+
+# reserved registers
+SB = 13; SP = 14; LNK = 15;   
+
+class eForm: # forms enum
+    Boolean, Integer, Array, Record = range( 4)
 
 U = 0x2000
 # frequently used opcodes
@@ -29,32 +36,35 @@ TYPE Object* = POINTER TO ObjDesc;
 Item = namedtuple( 'Item', [
     'mode', 
     'lev',  # int
-    'type', # Type
+    'type', # Type Descriptor
     'a',    # int
     'b',    # int
     'r'     # int
     ])
 
+ObjScope = namedtuple( 'ObjScope', [
+    'name',
+    'idents', # list of ObjDesc
+    ])
+
 ObjDesc = namedtuple( 'ObjDesc', [
     'class_', 
-    'lev',    # INTEGER
-    'next', 
-    'dsc',    # Object
-    'type',   # Type
+    # 'lev',    # INTEGER
+    'idents',   # list of Ident
+    'type',   # Type Descriptor
     'name',   # oss.Ident
     'val', 
     'nofpar'  # LONGINT
     ])
-    
+
 TypeDesc = namedtuple( 'TypeDesc', [
-    'form',   # INTEGER
-    'dsc',    # Object
-    'base',   # Type
-    'size', 
-    'len',   
+    'form',   # enum eForm 
+    'base',   # Type Descriptor
+    'size',   # of bytes
     'nofpar'  # LONGINT
     ])
     
+
 class Osg:  
     curlev = 0
     pc = 0
@@ -67,8 +77,8 @@ class Osg:
              Ior : "IOR", Xor : "XOR", Add : "ADD", Sub : "SUB", Mul : "MUL", Div : "/" }
     mnemo1 = { PL : 'PL', MI : 'MI', EQ : 'EQ', NE : 'NE', LT : 'LT', GE : 'GE', LE : 'LE', GT : 'GT', 15 : 'NO'}
     code = [ 0 for x in xrange( MemSize)] 
-    boolType = TypeDesc( form = Boolean, size = 4, dsc=None, base=None, len=None, nofpar=None)
-    intType  = TypeDesc( form = Integer, size = 4, dsc=None, base=None, len=None, nofpar=None)
+    boolType = TypeDesc( form = eForm.Boolean, size = 4, base=None, nofpar=None)
+    intType  = TypeDesc( form = eForm.Integer, size = 4, base=None, nofpar=None)
 
     def Put0( self, op, a, b, c):           
         ' emit format-0 instruction'
