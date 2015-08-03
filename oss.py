@@ -18,55 +18,67 @@ import string
 IDLEN = 32
 MAXEX = 38
 STRINGLEN = 256
+
+errcnt = 0
   
 class Lex:    # lexical symbols
-    null_ = 0; times_ = 1; rdiv_ = 2; div_ = 3; mod_ = 4;
-    and_ = 5; plus_ = 6; minus_ = 7; or_ = 8; eql_ = 9;
-    neq_ = 10; lss_ = 11; leq_ = 12; gtr_ = 13; geq_ = 14;
-    in_ = 15; is_ = 16; arrow_ = 17; period_ = 18;
-    char_ = 20; int_ = 21; real_ = 22; false_ = 23; true_ = 24;
-    nil_ = 25; string_ = 26; not_ = 27; lparen_ = 28; lbrak_ = 29;
-    lbrace_ = 30; ident_ = 31;
-    if_ = 32; while_ = 34; repeat_ = 35; case_ = 36; for_ = 37;
-    comma_ = 40; colon_ = 41; becomes_ = 42; upto_ = 43; rparen_ = 44;
-    rbrak_ = 45; rbrace_ = 46; then_ = 47; of_ = 48; do_ = 49;
-    to_ = 50; by_ = 51; semicolon_ = 52; end_ = 53; bar_ = 54;
-    else_ = 55; elsif_ = 56; until_ = 57; return_ = 58;
-    array_ = 60; record_ = 61; pointer_ = 62; const_ = 63; type_ = 64;
-    var_ = 65; procedure_ = 66; begin_ = 67; import_ = 68; module_ = 69; eof_ = 70
+    null = 0; times = 1; rdiv = 2; div = 3; mod = 4;
+    and_ = 5; plus = 6; minus = 7; or_ = 8; eql = 9;
+    neq = 10; lss = 11; leq = 12; gtr = 13; geq = 14;
+    in_ = 15; is_ = 16; arrow = 17; period = 18;
+    char_ = 20; int_ = 21; real = 22; false_ = 23; true_ = 24;
+    nil = 25; string_ = 26; not_ = 27; lparen = 28; lbrak = 29;
+    lbrace = 30; ident = 31;
+    if_ = 32; while_ = 34; repeat = 35; case = 36; for_ = 37;
+    comma = 40; colon = 41; becomes = 42; upto = 43; rparen = 44;
+    rbrak  = 45; rbrace = 46; then = 47; of = 48; do = 49;
+    to = 50; by = 51; semicolon = 52; end = 53; bar = 54;
+    else_ = 55; elsif = 56; until = 57; return_ = 58;
+    array = 60; record = 61; pointer = 62; const = 63; type = 64;
+    var = 65; procedure = 66; begin = 67; import_ = 68; module_ = 69; eof_ = 70
 
 KeyTable = {  
-    'IF': Lex.if_, 'DO' : Lex.do_, 'OF': Lex.of_,  'OR': Lex.or_, 'TO': Lex.to_, 
-    'IN': Lex.in_, 'IS': Lex.is_, 'BY': Lex.by_, 
-    'END': Lex.end_, 'NIL': Lex.nil_, 'VAR': Lex.var_, 'DIV': Lex.div_, 'MOD': Lex.mod_, 
-    'FOR': Lex.for_, 'ELSE': Lex.else_, 'THEN': Lex.then_, 'TRUE': Lex.true_, 'TYPE': Lex.type_, 
-    'CASE': Lex.case_, 'ELSIF': Lex.elsif_, 'FALSE': Lex.false_, 'ARRAY': Lex.array_, 
-    'BEGIN': Lex.begin_, 'CONST': Lex.const_, 'UNTIL': Lex.until_, 'WHILE': Lex.while_, 
-    'RECORD': Lex.record_, 'REPEAT': Lex.repeat_, 'RETURN': Lex.return_, 'IMPORT': Lex.import_, 
-    'MODULE': Lex.module_, 'POINTER': Lex.pointer_, 'PROCEDURE': Lex.procedure_
+    'IF': Lex.if_, 'DO' : Lex.do, 'OF': Lex.of,  'OR': Lex.or_, 'TO': Lex.to, 
+    'IN': Lex.in_, 'IS': Lex.is_, 'BY': Lex.by, 
+    'END': Lex.end, 'NIL': Lex.nil, 'VAR': Lex.var, 'DIV': Lex.div, 'MOD': Lex.mod, 
+    'FOR': Lex.for_, 'ELSE': Lex.else_, 'THEN': Lex.then, 'TRUE': Lex.true_, 'TYPE': Lex.type, 
+    'CASE': Lex.case, 'ELSIF': Lex.elsif, 'FALSE': Lex.false_, 'ARRAY': Lex.array, 
+    'BEGIN': Lex.begin, 'CONST': Lex.const, 'UNTIL': Lex.until, 'WHILE': Lex.while_, 
+    'RECORD': Lex.record, 'REPEAT': Lex.repeat, 'RETURN': Lex.return_, 'IMPORT': Lex.import_, 
+    'MODULE': Lex.module_, 'POINTER': Lex.pointer, 'PROCEDURE': Lex.procedure
     }
+
+def mark( msg):
+    global errcnt, errpos, line, pos
+    if line > errpos and errcnt < 25:
+        print ; print '^'.rjust( 2 * (pos-1)) + msg
+    errcnt += 1 
+    errpos = line
+
 
 class Lexer:
     def __init__( self, reader):
+        global errpos, errcnt, line, pos
         self.reader = reader    
+        errpos = 0
+        errcnt = 0
+        line = 1
+        pos = 0
         self.ch = reader.next()
         # print self.ch, # dbg
         self.value = None
-        self.errpos = 0
-        self.errcnt = 0
 
     def next( self):                    # get next character 
+        global pos, line
         # self.ch = self.infile.read(1)
+        print self.ch,  # dbg
         try: self.ch = self.reader.next()
         except StopIteration: self.ch = ''
-        # print self.ch,  # dbg
+        pos += 1
+        if self.ch in '\r\n' : 
+            line += 1; 
+            pos = 0
 
-    def mark( self, msg):
-        p = self.infile.tell()
-        if p > self.errpos and  self.errcnt < 25:
-            print " pos", p, msg  
-        self.errcnt += 1 
-        self.errpos = p + 4
 
     def getIdentifier( self):           # returns sym = keyword or ident
         ids = []
@@ -75,7 +87,7 @@ class Lexer:
             self.next()
         ids = ''.join( ids)
         if ids in KeyTable : return KeyTable[ ids]
-        else: self.value = ids[: IDLEN]; return Lex.ident_
+        else: self.value = ids[: IDLEN]; return Lex.ident
 
     def getString( self):
         self.next()
@@ -180,7 +192,7 @@ class Lexer:
                     if e <= MAXEX : x = self.Ten(e) * x 
                     else:  x = 0.0; self.mark( 'too large')
                 self.value = x
-                return  Lex.real_
+                return  Lex.real
 
         else:   # decimal integer
             try: self.value = int( ''.join( digits)) 
@@ -207,58 +219,58 @@ class Lexer:
         if self.ch < 'A' :
             if self.ch < '0' :
                 if   self.ch == '"' : return self.getString()
-                elif self.ch == "#" : self.next(); return Lex.neq_
+                elif self.ch == "#" : self.next(); return Lex.neq
                 elif self.ch == "$" : return self.getHexString() 
                 elif self.ch == "&" : self.next(); return Lex.and_
                 elif self.ch == "(" : 
                     self.next(); 
                     if self.ch == "*" : return self.comment()
-                    else: return Lex.lparen_
-                elif self.ch == ")" : self.next(); return Lex.rparen_
-                elif self.ch == "*" : self.next(); return Lex.times_
-                elif self.ch == "+" : self.next(); return Lex.plus_
-                elif self.ch == "," : self.next(); return Lex.comma_
-                elif self.ch == "-" : self.next(); return Lex.minus_
+                    else: return Lex.lparen
+                elif self.ch == ")" : self.next(); return Lex.rparen
+                elif self.ch == "*" : self.next(); return Lex.times
+                elif self.ch == "+" : self.next(); return Lex.plus
+                elif self.ch == "," : self.next(); return Lex.comma
+                elif self.ch == "-" : self.next(); return Lex.minus
                 elif self.ch == "." : 
                     self.next();
-                    if self.ch == "." : self.next(); return Lex.upto_
-                    else: return Lex.period_
-                elif self.ch == "/" : self.next(); return Lex.rdiv_
-                else: self.next();  return Lex.null_   # ! % ' 
+                    if self.ch == "." : self.next(); return Lex.upto
+                    else: return Lex.period
+                elif self.ch == "/" : self.next(); return Lex.rdiv
+                else: self.next();  return Lex.null   # ! % ' 
                 
             elif self.ch < ":" : return self.getNumber()
             elif self.ch == ":" : 
                 self.next();
-                if self.ch == "=" : self.next(); return Lex.becomes_
-                else: return Lex.colon_
-            elif self.ch == ";" : self.next(); return Lex.semicolon_
+                if self.ch == "=" : self.next(); return Lex.becomes
+                else: return Lex.colon
+            elif self.ch == ";" : self.next(); return Lex.semicolon
             elif self.ch == "<" :  
                 self.next();
-                if self.ch == "=" : self.next(); return Lex.leq_
-                else: return Lex.lss_
-            elif self.ch == "=" : self.next(); return Lex.eql_
+                if self.ch == "=" : self.next(); return Lex.leq
+                else: return Lex.lss
+            elif self.ch == "=" : self.next(); return Lex.eql
             elif self.ch == ">" : 
                 self.next();
-                if self.ch == "=" : self.next(); return Lex.geq_
-                else: return Lex.gtr_ 
-            else:  self.next(); return Lex.null_
+                if self.ch == "=" : self.next(); return Lex.geq
+                else: return Lex.gtr
+            else:  self.next(); return Lex.null
 
         elif self.ch < "[" : return self.getIdentifier()
         elif self.ch < "a" :
             c = self.ch; self.next()
-            if   c == "[" : return Lex.lbrak_
-            elif c == "]" : return Lex.rbrak_
-            elif c == "^" : return Lex.arrow_
-            else:  return Lex.null_         # _ ` 
+            if   c == "[" : return Lex.lbrak
+            elif c == "]" : return Lex.rbrak
+            elif c == "^" : return Lex.arrow
+            else:  return Lex.null         # _ ` 
 
         elif self.ch < "{" : return self.getIdentifier() 
         else:
             c = self.ch; self.next()
-            if   c == "{" : return Lex.lbrace_
-            elif c == "}" : return Lex.rbrace_
-            elif c == "|" : return Lex.bar_
+            if   c == "{" : return Lex.lbrace
+            elif c == "}" : return Lex.rbrace
+            elif c == "|" : return Lex.bar
             elif c == "~" : return Lex.not_
-            elif c == 0x7f: return Lex.upto_
-            else: return Lex.null_
+            elif c == 0x7f: return Lex.upto
+            else: return Lex.null
             
 

@@ -10,6 +10,7 @@ MemSize = 8192
 WordSize = 4
 
 class eClass:
+    strings = [ 'Const', 'Var', 'Par', 'Field', 'Type', 'SProc', 'SFunc', 'Proc', 'NoTyp']
     Const, Var, Par, Field, Typ, SProc, SFunc, Proc, NoTyp = range( 9)
 
 class eMode:
@@ -29,40 +30,45 @@ Ldw = 0; Stw = 2
 BR = 0; BLR = 1; BC = 2; BL = 3
 MI = 0; PL = 8; EQ = 1; NE = 9; LT = 5; GE = 13; LE = 6; GT = 14
 
-'''  
-TYPE Object* = POINTER TO ObjDesc;
-    Type* = POINTER TO TypeDesc;
-'''
-Item = namedtuple( 'Item', [
-    'mode', 
-    'lev',  # int
-    'type', # Type Descriptor
-    'a',    # int
-    'b',    # int
-    'r'     # int
-    ])
+class Item:
+    def __init__( self, mode=eMode.Reg, level=0, type=None):
+        self.mode = mode
+        self.lev = level  # int
+        self.type = None # Type Descriptor
+        self.a = 0    # int
+        self.b = 0    # int
+        self.r = 0    # int
 
 ObjScope = namedtuple( 'ObjScope', [
     'name',
     'idents', # list of ObjDesc
     ])
 
-ObjDesc = namedtuple( 'ObjDesc', [
-    'class_', 
-    # 'lev',    # INTEGER
-    'idents',   # list of Ident
-    'type',   # Type Descriptor
-    'name',   # oss.Ident
-    'val', 
-    'nofpar'  # LONGINT
-    ])
+class ObjDesc :
+    def __init__( self, name='', cl=eClass.Const):
+        self.name = name
+        self.class_ =  cl   # enum eClass
+        self.lev = 0        # integer
+        # self.idents = []    # list of Ident
+        self.type = None    # TypeDesc obj
+        self.value = 0 
+        self.nofpar = 0
+    
+    def __repr__( self):
+        return 'ObjDesc %s: %s value=%s, nofpar=%s, type=%s\n\r' % \
+                ( self.name, eClass.strings[self.class_], self.value, self.nofpar, self.type)
 
-TypeDesc = namedtuple( 'TypeDesc', [
-    'form',   # enum eForm 
-    'base',   # Type Descriptor
-    'size',   # of bytes
-    'nofpar'  # LONGINT
-    ])
+class TypeDesc:
+    def __init__( self, name='', form=eForm.Integer, size=4):
+        self.name = name
+        self.form = form     # enum eForm
+        self.size = size     # of bytes
+        self.base = None     # parent type (array)
+        self.nofpar = 0      # number of parameters (function)
+        self.len = 0         # number of elements (array)
+    def __repr__( self):
+        return 'TypeDesc %s: form=%s, size=%s, base=%s, nofpar=%s' % \
+                ( self.name, self.form, self.size, self.base, self.nofpar)
     
 
 class Osg:  
@@ -77,8 +83,6 @@ class Osg:
              Ior : "IOR", Xor : "XOR", Add : "ADD", Sub : "SUB", Mul : "MUL", Div : "/" }
     mnemo1 = { PL : 'PL', MI : 'MI', EQ : 'EQ', NE : 'NE', LT : 'LT', GE : 'GE', LE : 'LE', GT : 'GT', 15 : 'NO'}
     code = [ 0 for x in xrange( MemSize)] 
-    boolType = TypeDesc( form = eForm.Boolean, size = 4, base=None, nofpar=None)
-    intType  = TypeDesc( form = eForm.Integer, size = 4, base=None, nofpar=None)
 
     def Put0( self, op, a, b, c):           
         ' emit format-0 instruction'
@@ -102,14 +106,14 @@ class Osg:
         self.pc += 1
 
     def incR( self):
-        if self.self.rh < SB : self.rh =+ 1 
+        if self.rh < SB : self.rh += 1 
         else: oss.mark("register stack overflow") 
 
     def CheckRegs( self):
-        if self.self.rh != 0 :
+        if self.rh != 0 :
             # Texts.WriteString(W, "RegStack!"); Texts.WriteInt(W, R, 4);
-            print
-            oss.mark("Reg Stack"); self.rh = 0
+            # print
+            oss.mark( 'Reg Stack: %d' % self.rh); self.rh = 0
 
     def SetCC( self, x, n): 
         x.mode = Cond; x.a = 0; x.b = 0; x.r = n
@@ -134,28 +138,28 @@ class Osg:
   
     def load( self, x): # ( x:item) -> item
         'emits load of an item in a register'
-        if x.mode != Reg :
+        if x.mode != eMode.Reg :
             if x.mode == Var :
                 if x.r > 0 : # local
-                    self.Put2(Ldw, self.rh, SP, x.a) 
+                    self.Put2( Ldw, self.rh, SP, x.a) 
                 else:   # global 
-                    self.Put2(Ldw, self.rh, SB, x.a) 
+                    self.Put2( Ldw, self.rh, SB, x.a) 
                 x.r = self.rh; self.incR()
             elif x.mode == Par : 
-                self.Put2(Ldw, self.rh, x.r, x.a); 
-                self.Put2(Ldw, self.rh, self.rh, 0); 
+                self.Put2( Ldw, self.rh, x.r, x.a); 
+                self.Put2( Ldw, self.rh, self.rh, 0); 
                 x.r = self.rh; self.incR()
             elif x.mode == Const :
                 if (x.a >= 0x10000) or (x.a < -0x10000) : oss.mark( 'const too large') 
                 self.Put1( Mov, self.rh, 0, x.a) 
-                x.r = self.rh; self.incR()
-            elif x.mode == RegI : self.Put2(Ldw, x.r, x.r, x.a)
-            elif x.mode == Cond :
+                x.r = self.rh; self.incR(); print 'load inc', self.rh 
+            elif x.mode == eMode.RegI : self.Put2( Ldw, x.r, x.r, x.a)
+            elif x.mode == eMode.Cond :
                 self.Put3( 2, self.negated( x.r), 2);
                 self.FixLink( x.b); self.self.Put1( Mov, self.rh, 0, 1); self.Put3(2, 7, 1);
                 self.FixLink( x.a); self.self.Put1( Mov, self.rh, 0, 0); 
                 x.r = self.rh; self.incR()        
-            x.mode = Reg
+            x.mode = eMode.Reg
             return x
 
     def loadAdr( self, x): # ( x: Item) -> Item
@@ -173,7 +177,7 @@ class Osg:
             x.r = self.rh; self.incR()
         elif (x.mode == RegI) & (x.a != 0) : 
             self.Put1(Add, x.r, x.r, x.a)
-        else: oss.mark("address error")         
+        else: oss.mark( 'address error')         
         x.mode = Reg
         return x
 
@@ -206,14 +210,17 @@ class Osg:
     def IncLevel( self, n): 
         self.curlev = self.curlev + n
 
-    def MakeConstItem( self, x, typ, val): # (x:Item; typ: Type; val: LONGINT) -> item
-        x.mode = Const; x.type = typ; x.a = val
-        return x
+    def MakeConstItem( self, x, type, value): 
+        'make item x a constant value'
+        x.class_ = eClass.Const
+        x.type = type
+        x.a = value
 
-    def MakeItem( self, x, y, curlev): # (x:Item; y: Object; curlev: LONGINT) -> item
-        x.mode = y.class_; x.type = y.type; x.a = y.val; x.r = y.lev;
-        if y.class_ == Par : x.b = 0 
-        if (y.lev > 0) & (y.lev != curlev) & (y.class_ != Const) : oss.mark( 'level error') 
+    def MakeItem( self, x, y, curlev): # ( y: Object; curlev) -> item
+        'make an item out of an object'
+        x.mode = y.class_; x.type = y.type; x.a = y.value; x.r = y.lev;
+        if y.class_ == eClass.Par : x.b = 0 
+        if (y.lev > 0) & (y.lev != curlev) & (y.class_ != eClass.Const) : oss.mark( 'level error') 
         return x
 
     def Field( self, x, y): # x:Item y:Object
@@ -397,9 +404,9 @@ class Osg:
         self.SetCC( x, self.relmap[op - oss.eql])
         return x, y
 
-    def Store( self, x, y): # (x:Item)->Item; #  x = y 
-        load(y);
-        if x.mode == Var :
+    def Store( self, x, y):  #  x <= y 
+        self.load( y);
+        if x.mode == eClass.Var :
             if x.r > 0 : # local*) 
                 self.Put2( Stw, y.r, SP, x.a) 
             else: 
@@ -412,7 +419,7 @@ class Osg:
             self.rh -= 1
         else: oss.mark( 'illegal assignment')
         self.rh -= 1
-        return x, y
+        
 
     def VarParam( self,  x, ftype): # ( xItem; ftype: Type) -> Item
         xmd = x.mode; loadAdr(x);
@@ -478,7 +485,7 @@ class Osg:
         self.rh = 0
 
     def Ord( self, x): 
-        self.load(x); x.type = intType
+        self.load(x); # x.type = intType
         return x
 
     def ReadInt( self, x): 
