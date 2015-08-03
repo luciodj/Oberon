@@ -19,8 +19,7 @@ IDLEN = 32
 MAXEX = 38
 STRINGLEN = 256
 
-errcnt = 0
-  
+
 class Lex:    # lexical symbols
     null = 0; times = 1; rdiv = 2; div = 3; mod = 4;
     and_ = 5; plus = 6; minus = 7; or_ = 8; eql = 9;
@@ -48,6 +47,11 @@ KeyTable = {
     'MODULE': Lex.module_, 'POINTER': Lex.pointer, 'PROCEDURE': Lex.procedure
     }
 
+errcnt = 0
+
+def getErrcnt():
+    return errcnt
+
 def mark( msg):
     global errcnt, errpos, line, pos
     if line > errpos and errcnt < 25:
@@ -65,8 +69,6 @@ class Lexer:
         line = 1
         pos = 0
         self.ch = reader.next()
-        # print self.ch, # dbg
-        self.value = None
 
     def next( self):                    # get next character 
         global pos, line
