@@ -16,7 +16,7 @@ JMPMASK = (1<<24) - 1
 
 FP   = 13
 SP   = 14
-LINK = 15
+LNK  = 15
 ZERO = 0 
 
 def ror( x, bits):
@@ -31,7 +31,6 @@ class Risc:
     MI = 0; EQ = 1; LS = 5; LE = 6; TR = 7; NE = 9; GE = 13; GT = 14 
 
     R = [ 0 for x in xrange( REGNUM)]   # 32-bit registers
-    M = [ 0 for x in xrange( MEMLEN)]   # words
     # pq
     # 00uv |  a(4) | b(4) | opcode(4) |  xxxx  | c(4) |  # a = opcode( b, c)
     # 01uv |  a(4) | b(4) | opcode(4) |     imm(16)   |  # a = opcode( b, imm)
@@ -49,17 +48,17 @@ class Risc:
         print 'R1=', hex(self.R[1]), 
         print 'R2=', hex(self.R[2])
 
-    def run( self):
+    def run( self, M, size):
         pc = 0
-        self.R[ SP] = MEMLEN * 4
-        self.R[ FP] = pc
+        self.R[ SP] = len( M)
+        self.R[ FP] = size
         H = N = Z = 0
         EOF = False
         print 'RUN:'
         while True: 
             # self.printState( pc) # dbg
             time.sleep(.25)
-            ir = self.M[ pc] 
+            ir = M[ pc] 
             pc += 1
             p = (ir >> 31) & 1
             q = (ir >> 30) & 1
@@ -78,7 +77,7 @@ class Risc:
                     C = im                                      # not sign extended
                 else:       
                     C = im - 0x10000 if im > 0x8000 else  im   # sign extension 
-                if op == self.MOV: A = C if u == 0 else H 
+                if   op == self.MOV: A = C if u == 0 else H 
                 elif op == self.LSL: A = B << C
                 elif op == self.ASR: A = B >> C
                 elif op == self.ROR: A = ror (B, C)
@@ -97,7 +96,7 @@ class Risc:
                 adr = ( self.R[b] + off)
                 if u == 0 : 
                     if adr >= 0:  # load
-                        self.R[a] = self.M[ adr]; 
+                        self.R[a] = M[ adr]; 
                     else:  # input
                         if adr == -4 : # hex input 
                             s = raw_input( '>'); 
@@ -107,7 +106,7 @@ class Risc:
                             Z = EOF
                 else:
                     if adr >= 0 : # store
-                        self.M[ adr] = self.R[a]
+                        M[ adr] = self.R[a]
                     else: # output
                         if   adr == -4 : print '>', hex( self.R[a]),
                         elif adr == -8 : print chr( self.R[a] & 0x7F),
@@ -116,17 +115,14 @@ class Risc:
             else:               # branch instructions
                 if  (a == self.MI) and N or (a == self.EQ) and Z or (a == self.LS) and N or (a == self.LE) and (N or Z) or (a == self.TR) or \
                     (a == self.NE) and not Z or (a == self.GE) and not N or (a == self.GT) and not (N or Z) : #(a == self.NE) and not N or 
-                    if v == 1 :  self.R[SP] = pc * 4 
+                    if v == 1 :  self.R[LNK] = pc  * 4 
                     if u == 1 :  
                         rel = ir & OFFMASK
                         if rel & (1<<19) : rel = rel - (1<<20)
                         pc = pc + rel 
                     else: 
-                        pc = self.R[ir & REGMASK] / 4
-            if pc == 0: print 'STOP'; return
+                        pc = self.R[ ir & REGMASK] / 4
+            if pc == 0: print '\nSTOP'; return
   
-    def load( self, code):
-        self.M = code[:]
-        if len(self.M) < MEMLEN : self.M.extend( [0 for x in xrange( MEMLEN - len(self.M))])
 
 

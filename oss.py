@@ -24,12 +24,12 @@ class Lex:    # lexical symbols
     in_ = 15; is_ = 16; arrow = 17; period = 18;
     char_ = 20; int_ = 21; real = 22; false_ = 23; true_ = 24;
     nil = 25; string_ = 26; not_ = 27; lparen = 28; lbrak = 29;
-    lbrace = 30; ident = 31;
-    if_ = 32; while_ = 34; repeat = 35; case = 36; for_ = 37;
+    hash_ = 30; ident = 31;
+    if_ = 32; lbrace = 33; while_ = 34; loop = 35; case = 36; for_ = 37;
     comma = 40; colon = 41; becomes = 42; upto = 43; rparen = 44;
     rbrak  = 45; rbrace = 46; then = 47; of = 48; do = 49;
     to = 50; by = 51; semicolon = 52; end = 53; bar = 54;
-    else_ = 55; elsif = 56; until = 57; return_ = 58;
+    else_ = 55; elsif = 56; until = 57; return_ = 58; repeat = 59;
     array = 60; record = 61; pointer = 62; const = 63; type = 64;
     var = 65; procedure = 66; begin = 67; import_ = 68; module_ = 69; eof_ = 70
 
@@ -97,7 +97,7 @@ class Lexer:
             self.next()
         s = ''.join( s)
         if len( s) > STRINGLEN : 
-            self.mark( 'string too long') 
+            mark( 'string too long') 
         self.next()
         self.value = s[:STRINGLEN]
         return Lex.string_
@@ -111,10 +111,10 @@ class Lexer:
             s += self.ch; self.next()
             try:   m = int( s, base = 16)
             except ValueError:
-                self.mark( 'hex dig pair expected')
+                mark( 'hex dig pair expected')
             if len( self.value) < STRINGLEN : 
                 self.value += chr( m); 
-            else: self.mark( 'string too long') 
+            else: mark( 'string too long') 
         self.next()
         return Lex.string_
 
@@ -133,16 +133,16 @@ class Lexer:
         while self.ch in string.hexdigits:
             digits.append( self.ch)
             self.next()
-        if len(digits) > 16 : self.mark( 'too many digits'); s = ''
+        if len(digits) > 16 : mark( 'too many digits'); s = ''
         else: s = ''.join( digits)
         # print s # dbg
 
         if (self.ch in 'XHR') :  # hex (char, int or real)
             c = self.ch; self.next()
             try: self.value = int( s, base=16)
-            except ValueError: self.mark( 'bad hex digits')
+            except ValueError: mark( 'bad hex digits')
             if c  == 'X': 
-                if self.value >= 0x100 :  self.mark( 'bad char value')
+                if self.value >= 0x100 :  mark( 'bad char value')
                 return  Lex.char_
             elif c == 'R' : 
                 self.value *= 1.0
@@ -155,14 +155,14 @@ class Lexer:
             if self.ch == "." :     
                 self.ch = chr(0x7f)  # double dot (upto) -> decimal integer
                 try: self.value = int( s, base=10)
-                except ValueError: self.mark( 'bad integer')
+                except ValueError: mark( 'bad integer')
                 return  Lex.int_
 
             else:     # real numbers
                 x = 0.0
                 e = 0
                 try: x = int( s, base=10)
-                except ValueError: self.mark( 'bad integer part')
+                except ValueError: mark( 'bad integer part')
                 while self.ch in string.digits :  # fraction
                     x = x * 10.0 + int( self.ch); 
                     e -= 1 
@@ -183,19 +183,19 @@ class Lexer:
                             self.next()
                             if not self.ch in string.digits: break
                         e = (e - s) if negE else (e + s) 
-                    else: self.mark( 'digit?')
+                    else: mark( 'digit?')
                   
                 if e < 0 :
                     x = x / self.Ten(-e) if e >= -MAXEX else 0.0 
                 elif e > 0 :
                     if e <= MAXEX : x = self.Ten(e) * x 
-                    else:  x = 0.0; self.mark( 'too large')
+                    else:  x = 0.0; mark( 'too large')
                 self.value = x
                 return  Lex.real
 
         else:   # decimal integer
             try: self.value = int( ''.join( digits)) 
-            except ValueError : self.mark( 'bad integer')
+            except ValueError : mark( 'bad integer')
             return Lex.int_
 
     def comment( self):
@@ -209,7 +209,7 @@ class Lexer:
             while self.ch == "*" : self.next() 
             if self.ch == ')' or self.ch == '' : break
         if self.ch != '' : self.next() 
-        else: self.mark( 'unterminated comment')
+        else: mark( 'unterminated comment')
 
     def get( self):   # returns last symbol detected 
         self.value = None

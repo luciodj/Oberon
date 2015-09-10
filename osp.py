@@ -10,46 +10,46 @@ from oss import Lex, Lexer, mark, getErrcnt
 
 level = 0
 
-def NewObj( name, cl): # -> objDesc
-    scope = universe[ topScope]
+def newObj( name, clss): # -> objDesc
+    scope = universe[0]
     for ident in scope.idents:
         if ident.name == name : 
             mark( 'multiple definitions')
             return ident
-    new = osg.ObjDesc( name, cl)
+    new = osg.ObjDesc( name, clss)
     scope.idents.append( new) 
     return new
 
 def find( ident): # -> obj
     'search identifier in curren scope and above'
-    for scope in universe[ topScope:] :
+    for scope in universe :
         for i in scope.idents:
             if i.name == ident: return i 
     else:  
         mark( 'undefined'); return dummy 
 
-def FindField( ident, lst):
+def findField( ident, lst):
     for i in lst: 
         if i.name == ident : return i
     else: 
         Lex.mark( 'undefined'); return dummy 
 
-def Check( sym, s, msg): # -> sym
+def check( sym, s, msg): # -> sym
     if sym == s : sym = lex.get(); return sym 
     else: mark( msg) 
 
-def CheckInt( item): 
+def checkInt( item): 
     if item.type.form != eForm.Integer : mark( 'not integer') 
 
-def CheckBool( item): 
+def checkBool( item): 
     if item.type.form != eForm.Boolean : mark( 'not Boolean') 
 
-def OpenScope( name):
+def openScope( name):
     scope = osg.ObjScope( name=name, idents=[])
-    universe.insert( topScope, scope) 
+    universe.insert( 0, scope)
      
-def CloseScope():
-    universe.pop( topScope)
+def closeScope():
+    universe.pop( 0)
 
 # -------------------- Parser ---------------------
 
@@ -59,56 +59,52 @@ def selector( sym, xItem): # osg.Item
         if sym == Lex.lbrak :
             sym = lex.get(); sym = expression( sym, yItem)
             if xItem.type.form == eForm.Array :
-                CheckInt( yItem); gen.Index( xItem, yItem); xItem.type = xItem.type.base
+                checkInt( yItem); gen.Index( xItem, yItem); xItem.type = xItem.type.base
             else: mark('not an array')          
-            sym = Check( sym, Lex.rbrak, 'no ]')
+            sym = check( sym, Lex.rbrak, 'no ]')
         else: # period 
-            sym, id_ = lex.get()
+            sym = lex.get()
             if sym == Lex.ident :
-                if xItem.type.form == osg.Record :
-                    obj = FindField( id_, xItem.type.fieldList)
+                if xItem.type.form == eForm.Record :
+                    obj = findField( lex.value, xItem.type.fields)
                     sym = lex.get()
-                    osg.Field( xItem, obj) 
+                    gen.Field( xItem, obj) 
                     xItem.type = obj.type 
                 else: mark('not a record')
             else: mark( 'ident?')      
     return sym
 
-def CompTypes( t0, t1): # (osg.Type): # -> BOOLEAN;
+def compTypes( t0, t1): # (osg.Type): # -> BOOLEAN;
     'Compatible Types'
     return (t0 == t1) or \
            (t0.form == osg.Array) and (t1.form == osg.Array) and CompTypes( t0.base, t1.base)
 
 
-def Parameter( sym, par): # osg.Object
+def parameter( sym, par): # osg.Object
     xItem = Item()
     sym = expression( sym, xItem)
-    if par :
-        varpar = par.class_ == eClass.Par
-        if CompTypes( par.type, xItem.type) :
-            if not varpar : osg.ValueParam( xItem)
-            else: osg.VarParam( xItem, par.type)
-        elif ( xItem.type.form == osg.Array) and (par.type.form == osg.Array) and \
-        ( xItem.type.base.form == par.type.base.form) and (par.type.len < 0) :
-            osg.OpenArrayParam( xItem)
+    varpar = par.class_ == eClass.Par
+    if CompTypes( par.type, xItem.type) :
+        if not varpar : osg.ValueParam( xItem)
+        else: osg.VarParam( xItem, par.type)
+    elif ( xItem.type.form == osg.Array) and (par.type.form == osg.Array) and \
+    ( xItem.type.base.form == par.type.base.form) and (par.type.len < 0) :
+        osg.OpenArrayParam( xItem)
     else: mark('incompatible parameters')
     return sym
   
-def ParamList( sym, obj): # osg.Object
-    par = obj.dsc; n = 0;
+def paramList( sym, obj): # osg.Object
+    par = obj.params
     if sym != Lex.rparen :
-        Parameter(par); n = 1;
-        while sym <= Lex.comma :
-            sym = Check( sym, Lex.Comma, 'comma?')
-            if par : par = par.next 
-            INC(n); Parameter(par)        
-        sym = Check( sym, Lex.rparen, ') missing')
+        for par in obj.idents:
+            sym = parameter( sym, par)
+            if sym <= Lex.comma :
+                sym = check( sym, Lex.Comma, 'comma? too many parameters')
+        sym = check( sym, Lex.rparen, ') missing')
     else: sym = lex.get();
-    if n < obj.nofpar : mark('too few params')
-    elif n > obj.nofpar : mark('too many params')
     return sym
 
-def StandFunc( sym, xItem, fctno): 
+def sysFunc( sym, xItem, fctno): 
     'parse a builtin function'
     if sym == Lex.lparen :
         sym = lex.get();
@@ -134,15 +130,15 @@ def factor( sym, xItem): # -> sym
         obj = find( lex.value); sym = lex.get();
         if obj.class_ == eClass.SFunc :
             if not obj.type : mark('not a function'); obj.type = intType 
-            sym = StandFunc( sym, xItem, obj.value); xItem.type = obj.type
+            sym = sysFunc( sym, xItem, obj.value); xItem.type = obj.type
         else: gen.MakeItem( xItem, obj, level); sym = selector( sym, xItem)
     elif sym == Lex.int_ : gen.MakeConstItem( xItem, intType, lex.value); sym = lex.get()
     elif sym == Lex.char_ : gen.MakeConstItem( xItem, intType, lex.value); sym = lex.get()
     elif sym == Lex.lparen :
         sym = lex.get();
         if sym != Lex.rparen : sym = expression1( sym, xItem) 
-        Check(Lex.rparen, 'no )')
-    elif sym == Lex.not_ : sym = lex.get(); sym = factor( sym, xItem); CheckBool(xItem); osg.Not(xItem)
+        check(Lex.rparen, 'no )')
+    elif sym == Lex.not_ : sym = lex.get(); sym = factor( sym, xItem); checkBool(xItem); osg.Not(xItem)
     elif sym == Lex.false_ : gen.MakeConstItem( xItem, boolType, 0); sym = lex.get()
     elif sym == Lex.true_ :  gen.MakeConstItem( xItem, boolType, 1); sym = lex.get()
     else: mark( 'factor?'); gen.MakeItem( xItem, dummy, level)
@@ -154,43 +150,43 @@ def term( sym, xItem): # -> sym
     while (sym >= Lex.times) and (sym <= Lex.and_) :
         op = sym; sym = lex.get();
         if op == Lex.times : 
-            CheckInt( xItem); sym = factor( sym, yItem); CheckInt( yItem); osg.MulOp( xItem, yItem)
+            checkInt( xItem); sym = factor( sym, yItem); checkInt( yItem); osg.MulOp( xItem, yItem)
         elif ( op == Lex.div) or ( op == Lex.mod) : 
-            CheckInt( xItem); sym = factor( sym, yItem); CheckInt( yItem); osg.DivOp( op, xItem, yItem)
+            checkInt( xItem); sym = factor( sym, yItem); checkInt( yItem); osg.DivOp( op, xItem, yItem)
         else: # op == and_
-            CheckBool( xItem); osg.And1( xItem); sym = factor( sym, yItem); CheckBool( yItem); osg.And2( xItem, yItem)
+            checkBool( xItem); osg.And1( xItem); sym = factor( sym, yItem); checkBool( yItem); osg.And2( xItem, yItem)
     return sym
 
-def SimpleExpression( sym, xItem): # sym
+def simpleExpression( sym, xItem): # sym
     yItem = osg.Item()
-    if sym == Lex.plus : sym = lex.get(); sym = term( sym, xItem); CheckInt( xItem)
-    elif sym == Lex.minus : sym = lex.get(); sym = term( sym, xItem); CheckInt( xItem); osg.Neg( xItem)
+    if sym == Lex.plus : sym = lex.get(); sym = term( sym, xItem); checkInt( xItem)
+    elif sym == Lex.minus : sym = lex.get(); sym = term( sym, xItem); checkInt( xItem); osg.Neg( xItem)
     else: 
         sym = term( sym, xItem); 
     # import pdb; pdb.set_trace()
     while ( sym >= Lex.plus) and ( sym <= Lex.or_) :
         op = sym; sym = lex.get();
         if op == Lex.or_ : 
-            gen.Or1( xItem); CheckBool( xItem)
-            sym = term( sym, yItem); CheckBool( yItem)
+            gen.Or1( xItem); checkBool( xItem)
+            sym = term( sym, yItem); checkBool( yItem)
             gen.Or2( xItem, yItem)
         else: 
-            CheckInt( xItem)
-            sym = term( sym, yItem); CheckInt( yItem)
+            checkInt( xItem)
+            sym = term( sym, yItem); checkInt( yItem)
             gen.AddOp(op, xItem, yItem)
     return sym
 
 def expression( sym, xItem): # -> sym
     yItem = osg.Item()
-    sym = SimpleExpression( sym, xItem)
+    sym = simpleExpression( sym, xItem)
     if (sym >= Lex.eql) and (sym <= Lex.geq) :
-        op = sym; sym = lex.get(); sym = SimpleExpression( sym, yItem)
+        op = sym; sym = lex.get(); sym = simpleExpression( sym, yItem)
         if xItem.type == yItem.type : gen.Relation( op, xItem, yItem) 
         else: mark( 'incompatible types') 
         xItem.type = boolType
     return sym
 
-def StandProc( sym, pno): 
+def sysProc( sym, pno): 
     if sym == Lex.lparen :
         xItem = osg.Item()
         sym = lex.get(); sym = expression( sym, xItem)
@@ -217,7 +213,7 @@ def StatSequence( sym):
 
         if sym == Lex.ident :
             obj = find( lex.value); sym = lex.get()
-            if obj.class_ == eClass.SProc : sym = StandProc( sym, obj.value)
+            if obj.class_ == eClass.SProc : sym = sysProc( sym, obj.value)
             else: 
                 gen.MakeItem( xItem, obj, level); sym = selector( sym, xItem);
                 if sym == Lex.becomes :                     # assignment
@@ -227,7 +223,7 @@ def StatSequence( sym):
                 elif sym == Lex.eql : mark( 'should be =='); sym = lex.get(); sym = expression( sym, yItem)
                 elif sym == Lex.lparen : # procedure call
                     sym = lex.get();
-                    if (obj.class_ == gen.Proc) and (obj.type == NIL) : sym = ParamList( obj); gen.Call(obj);
+                    if (obj.class_ == gen.Proc) and (obj.type == None) : sym = paramList( sym, obj); gen.Call(obj);
                     else: mark('not a procedure')
                 elif obj.class_ == eClass.Proc :               # procedure call without parameters
                     if obj.nofpar > 0 : mark( 'missing parameters') 
@@ -238,33 +234,37 @@ def StatSequence( sym):
                 else: mark( 'not a procedure')
 
         elif sym == Lex.if_ :
-            sym = lex.get(); sym = expression( sym, xItem); CheckBool( xItem)
+            sym = lex.get(); sym = expression( sym, xItem); checkBool( xItem)
             gen.CFJump( xItem)
-            sym = Check( sym, Lex.then, 'no :')
+            sym = check( sym, Lex.then, 'no :')
             sym = StatSequence( sym); L = 0
             while sym == Lex.elsif :
                 sym = lex.get(); L = gen.FJump( L); gen.fixLink( xItem.a)
-                sym = expression( sym, xItem); CheckBool( xItem); 
+                sym = expression( sym, xItem); checkBool( xItem); 
                 gen.CFJump( xItem);
                 if sym == Lex.then : sym = lex.get() 
                 else: mark(':?') 
                 StatSequence
             if sym == Lex.else_ :
-                sym = lex.get(); L = gen.FJump( L); gen.fixLink(xItem.a); StatSequence
+                sym = lex.get(); L = gen.FJump( L); gen.fixLink(xItem.a); statSequence
             else: gen.fixLink(xItem.a)    
-            gen.fixLink(L);
+            gen.fixLink( L);
             if sym == Lex.end : sym = lex.get() 
             else: mark('END ?') 
 
         elif sym == Lex.while_ :
-            sym = lex.get(); L = osg.pc; sym = expression( sym, xItem); CheckBool(xItem); gen.CFJump(xItem);
-            Check(Lex.do, 'no :'); StatSequence; gen.BJump(L); gen.fixLink(xItem.a);
-            Check(Lex.end, 'no END')
+            sym = lex.get(); L = gen.pc 
+            sym = expression( sym, xItem); checkBool( xItem)
+            gen.CFJump( xItem)
+            check(Lex.do, 'no :'); sym = statSequence( sym) 
+            gen.BJump( L); gen.fixLink( xItem.a)
+            check( Lex.end, 'no END')
 
         elif sym == Lex.repeat :
-            sym = lex.get(); L = osg.pc; sym = StatSequence( sym);
+            sym = lex.get(); L = osg.pc; sym = statSequence( sym)
             if sym == Lex.until :
-                sym = lex.get(); sym = expression( sym, xItem); sym = CheckBool( sym, xItem); gen.CBJump(xItem, L)
+                sym = lex.get(); sym = expression( sym, xItem); checkBool( xItem)
+                gen.CBJump( xItem, L)
             else: mark('missing UNTIL'); sym = lex.get()  
         gen.checkRegs()
         if sym == Lex.semicolon : sym = lex.get()
@@ -275,7 +275,7 @@ def StatSequence( sym):
 def identList( sym, idList, cl): 
     'appends new identifiers to current scope with given class, returns them in a list'
     while sym == Lex.ident :
-        idList.append( NewObj( lex.value, cl))
+        idList.append( newObj( lex.value, cl))
         sym = lex.get();
         if sym == Lex.colon : break
         elif sym == Lex.comma : sym = lex.get()
@@ -284,7 +284,7 @@ def identList( sym, idList, cl):
     sym = lex.get()
     return sym
 
-def Type( sym): #  -> sym, type
+def typeDef( sym): #  -> sym, type
     if ( sym != Lex.ident) and ( sym < Lex.array) : 
         mark( 'type?');
         while True: 
@@ -292,41 +292,41 @@ def Type( sym): #  -> sym, type
             if ( sym == Lex.ident) or ( sym >= Lex.array) : break
     if sym == Lex.ident :
         obj = find( lex.value); sym = lex.get()
-        if obj.class_ == eClass.Typ : type = obj.type
+        if obj.class_ == eClass.Typ : typed = obj.type
         else: mark( 'type?') 
     elif sym == Lex.array :
         xItem = osg.Item()
-        sym = lex.get(); sym = expression( sym, xItem);
+        sym = lex.get(); sym = expression( sym, xItem)
         if ( xItem.mode != eClass.Const) or ( xItem.a < 0) : mark('bad index') 
         if sym == Lex.of : sym = lex.get() 
         else: mark('OF?')
-        sym, tp = Type( sym); 
-        type = osg.TypeDesc( form = eForm.Array); type.base = tp;
-        type.len = xItem.a; type.size = type.len * tp.size
+        sym, tp = typeDef( sym); 
+        typed = osg.TypeDesc( form = eForm.Array); typed.base = tp;
+        typed.len = xItem.a; typed.size = typed.len * tp.size
     elif sym == Lex.record :
         sym = lex.get() 
-        type = osg.TypeDesc( form = eForm.Record, size = 0); 
-        OpenScope( 'record')
+        sym = check( sym, Lex.begin, 'expecting {')
+        typed = osg.TypeDesc( form = eForm.Record, size = 0); 
+        openScope( 'record')
         while True:
             if sym == Lex.ident :
                 iList = []
-                sym, iList = identList( sym, iList, eForm.Fld ); 
-                sym = Type( sym, tp) 
-                while obj != NIL :
-                    obj.type = tp; 
-                    obj.value = type.size; 
-                    type.size = type.size + obj.type.size; 
-                    obj = obj.next                  
+                sym = identList( sym, iList, eClass.Field ); 
+                sym, typef = typeDef( sym) 
+                for obj in iList :
+                    obj.type = typef
+                    obj.value = typed.size              # offset of the field
+                    typed.size +=  obj.type.size        # grow record size
             if sym == Lex.semicolon : sym = lex.get()
             elif sym == Lex.ident : mark('; ?')
-            if sym != oss.ident: break
-        type.dsc = topScope.next; 
-        CloseScope; 
-        Check( Lex.end, 'no END')
+            if sym != Lex.ident: break
+        typed.fields = universe[ 0].idents              # move list of fields to type descriptor 
+        closeScope() 
+        sym =check( sym, Lex.end, 'no END')
     else: mark('ident?')  
-    return sym, type
+    return sym, typed
 
-def Declarations( sym, varsize): # -> sym, varsize
+def declarations( sym, varsize): # -> sym, varsize
     # sync
     xItem = osg.Item()
     if (sym < Lex.const) and (sym != Lex.end) :
@@ -337,90 +337,97 @@ def Declarations( sym, varsize): # -> sym, varsize
     if sym == Lex.const :
         sym = lex.get();
         while sym == Lex.ident :
-            obj = NewObj( lex.value, eClass.Const); sym = lex.get()
+            obj = newObj( lex.value, eClass.Const); sym = lex.get()
             if sym == Lex.eql : sym = lex.get() 
             else: mark('=?') 
             sym = expression( sym, xItem)
             if xItem.mode == eClass.Const : obj.value = xItem.a; obj.type = xItem.type
             else: mark( 'expression not constant')      
-            sym = Check( sym, Lex.semicolon, '; expected')
+            sym = check( sym, Lex.semicolon, '; expected')
     if sym == Lex.type :
         sym = lex.get();
         while sym == Lex.ident :
-            obj = NewObj( lex.value, eClass.Typ); 
+            obj = newObj( lex.value, eClass.Typ); 
             sym = lex.get()
             if sym == Lex.eql : sym = lex.get() 
             else: mark('=?')  
-            sym, obj.type = Type( sym)
-            sym = Check( sym, Lex.semicolon, '; expected')
+            sym, obj.type = typeDef( sym)
+            sym = check( sym, Lex.semicolon, '; expected')
     if sym == Lex.var :
         sym = lex.get()
         iList = []
         sym = identList( sym, iList, eClass.Var)
-        sym, tp = Type( sym)
+        sym, tp = typeDef( sym)
         for obj in iList:
             obj.type = tp
-            obj.lev = level
+            obj.level = level
             obj.value = varsize         # address
             varsize += obj.type.size
-        sym = Check( sym, Lex.semicolon, '; expected')
+        sym = check( sym, Lex.semicolon, '; expected')
     if ( sym >= Lex.const) and ( sym <= Lex.var) : 
         mark('declaration in bad order') 
     return sym, varsize
 
-def FPSection( sym, adr, nofpar):
-    if sym == Lex.var : sym = lex.get(); IdentList( eClass.Par, first)
-    else: IdentList( eClass.Var, first)
+def formalParametersSection( sym, adr, nofpar):
+    'parse a group of parameters i.e. ( ...; var a, b, c : int; ...'
+    global level
+    iList = []
+    if sym == Lex.var : sym = lex.get(); sym = identList( sym, iList, eClass.Par)
+    else: sym = identList( sym, iList, eClass.Var)
     if sym == Lex.ident :
         find(obj); sym = lex.get();
         if obj.class_ == eClass.Type : tp = obj.type 
         else: mark( 'type?'); tp = intType 
     else: mark( 'ident?'); tp = intType
     if first.class_ == eClass.Var :
-        parsize = tp.size;
+        parsize = tp.size
         if tp.form >= eForm.Array : mark( 'no struct params') 
-    else: parsize = WordSize
-    obj = first;
-    while obj != NIL :
-        nofpar += 1; obj.type = tp; obj.lev = level; obj.value = adr; adr = adr + parsize;
+    else: parsize = WordSize # var are references/pointers
+    for obj in iList:
+        nofpar += 1
+        obj.type = tp
+        obj.level = level
+        obj.value = adr; adr += parsize;
         obj = obj.next 
-    return sym
+    return sym, nofpar
 
-def ProcedureDecl( sym):
-    global level;
+def procedureDecl( sym):
+    global level
     marksize = 4;
-    # ProcedureDecl  
     sym = lex.get();
     if sym == Lex.ident :
         procid = Lex.id
-        obj = NewObj( lex.value, proc, eClass.Proc); sym = lex.get()
+        obj = newObj( lex.value, proc, eClass.Proc); sym = lex.get()
         parblksize = marksize
         nofpar = 0
-        OpenScope( 'procedure')  
-        level += 1; 
-        proc.val = -1;
-        if sym == Lex.lparen :
-            sym = lex.get();
+        openScope( 'function')  
+        level += 1
+        proc.value = -1
+
+        if sym == Lex.lparen :      # optional parameters list
+            sym = lex.get()
             if sym == Lex.rparen : sym = lex.get()
             else: 
-                sym = FPSection( sym, parblksize, nofpar);
-                while sym == Lex.semicolon : sym = lex.get(); sym = FPSection( sym, parblksize, nofpar) 
+                sym, parblksize, nofpar = formalParametersSection( sym, parblksize, nofpar);
+                while sym == Lex.semicolon : 
+                    sym = lex.get(); 
+                    sym, parblksize, nofpar = formalParametersSection( sym, parblksize, nofpar) 
                 if sym == Lex.rparen : sym = lex.get() 
                 else: mark(')?')
         locblksize = parblksize; proc.type = None; proc.dsc = topScope.next; proc.nofpar = nofpar;
-        sym = Check( sym, Lex.semicolon, '; expected');
+        sym = check( sym, Lex.semicolon, '; expected');
         sym = Declarations( sym, locblksize); proc.dsc = topScope.next;
         while sym == Lex.procedure :
-            sym = ProcedureDecl( sym); sym = Check( sym, Lex.semicolon, '; expected')   
+            sym = ProcedureDecl( sym); sym = check( sym, Lex.semicolon, '; expected')   
         proc.val = osg.pc; gen.Enter( parblksize, locblksize);
         if sym == Lex.begin : sym = lex.get(); sym = StatSequence( sym) 
-        sym = Check( sym, Lex.end, 'no END')
+        sym = check( sym, Lex.end, 'no END')
         if sym == Lex.ident :
             if procid != Lex.id : mark('no match') 
             sym = lex.get()   
         gen.Return( locblksize)
         level -= 1; 
-        CloseScope()
+        closeScope()
     return sym
 
 def Module( sym):
@@ -432,7 +439,7 @@ def Module( sym):
             sym = lex.get() 
         else: tag = 0 
         gen.Open()
-        OpenScope( 'module')
+        openScope( 'module')
         dc = 0
         level = 0
         if sym == Lex.ident :
@@ -440,19 +447,19 @@ def Module( sym):
             sym = lex.get()
             print 'Compiling module:', modid
         else: mark('ident?')
-        sym = Check( sym, Lex.semicolon, '; expected')
-        sym, dc = Declarations( sym, dc)
-        while sym == Lex.procedure : sym = ProcedureDecl( sym); sym = Check( sym, Lex.semicolon, '; expected') 
+        sym = check( sym, Lex.semicolon, '; expected')
+        sym, dc = declarations( sym, dc)
+        while sym == Lex.procedure : sym = ProcedureDecl( sym); sym = check( sym, Lex.semicolon, '; expected') 
         gen.Header( dc);
         if sym == Lex.begin : sym = lex.get(); sym = StatSequence( sym) 
-        sym = Check( sym, Lex.end, 'no END')
+        sym = check( sym, Lex.end, 'no END')
         if sym == Lex.ident :
             if modid != lex.value : Lex.mark( 'no match') 
             sym = lex.get()
         else: mark( 'ident?')      
         if sym != Lex.period : mark('. ?') 
         # universeView() # dbg        
-        CloseScope()
+        closeScope()
         if  getErrcnt() == 0 :
             gen.Close() 
             print '\r\nCode generated:', gen.pc, '\tdata:', dc
@@ -466,7 +473,7 @@ def Compile():
     return Module( sym) 
 
 def addBuiltin( name, cl, value, type):
-    obj = NewObj( name, cl)
+    obj = newObj( name, cl)
     obj.value = value
     obj.type = type
 
@@ -478,13 +485,13 @@ def universeView():
             print '<',i,'>', ident
 
 def parse( instream):
-    global universe, topScope, level, lex
+    global universe, level, lex
     print 'Oberon-0 Compiler'
     print
     lex = Lexer( instream)
     universe = []; topScope = 0 
     level = 0
-    OpenScope( 'root')
+    openScope( 'root')
     addBuiltin( 'eot', eClass.SFunc, 1, boolType)
     addBuiltin( 'ReadInt', eClass.SProc, 0, None)
     addBuiltin( 'WriteInt', eClass.SProc, 1, None)

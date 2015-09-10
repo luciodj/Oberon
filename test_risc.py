@@ -19,7 +19,6 @@ def test_print():
     g.Put1( osg.Mov,  2, 0, -8 )    # movi R2, -8 (printchar_code)
     g.Put2( osg.Stw,  1, 2,  0)     # stw  R1, R2 (print_char R1) 
     g.Put3( osg.BR, 7, -4*4)         # goto 0?
-    mcu.load( g.code[:4])
-    mcu.run()
+    mcu.run( g.code, 4)
     assert mcu.R[1] == ord('*')
     assert mcu.R[2] == -8 

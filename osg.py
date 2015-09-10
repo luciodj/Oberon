@@ -52,6 +52,7 @@ class ObjDesc :
         self.lev = 0        # integer
         self.type = None    # TypeDesc obj
         self.value = 0 
+        self.params = None
         self.nofpar = 0
     
     def __repr__( self):
@@ -64,12 +65,20 @@ class TypeDesc:
         self.form = form     # enum eForm
         self.size = size     # of bytes
         self.base = None     # parent type (array)
+        self.fields= None    # list of fields (record)
         self.nofpar = 0      # number of parameters (function)
         self.len = 0         # number of elements (array)
     def __repr__( self):
-        return 'TypeDesc %s: form=%s, size=%s, base=%s, nofpar=%s' % \
-                ( self.name, self.form, self.size, self.base, self.nofpar)
-    
+        if self.form == eForm.Array:
+            return 'TypeDesc %s: form=%s, size=%s, base=%s' % \
+                    ( self.name, 'Array', self.size, self.base)
+        elif self.form == eForm.Record:
+            return 'TypeDesc %s: form=%s, size=%s, fields=%s' % \
+                    ( self.name, 'Record', self.size, self.fields)
+        else:
+            return 'TypeDesc %s: form=%s, size=%s' % \
+                    ( self.name, self.form, self.size)
+            
 class Osg:  
     curlev = 0
     pc = 0
@@ -218,8 +227,8 @@ class Osg:
 
     def Field( self, item, obj): # item:Item obj:Object
         'item = item.obj'
-        if (item.mode == Var) or (item.mode == RegI) : 
-          item.a = item.a + obj.val
+        if (item.mode == eClass.Var) or (item.mode == eClass.RegI) : 
+          item.a = item.a + obj.value
         elif item.mode == Par : 
             self.Put2( Ldw, self.rh, item.r, item.a)
             item.mode = RegI; 
@@ -457,7 +466,7 @@ class Osg:
         self.Put3( 2, 7, L-self.pc-1)
 
     def Call( self, obj): # ( obj: Object)
-        self.Put3( 3, 7, obj.val - self.pc-1); 
+        self.Put3( 3, 7, obj.value - self.pc-1); 
         self.rh = 0
 
     def Enter( self, parblksize, locblksize): 
@@ -566,6 +575,7 @@ class Osg:
                 print mnem +'\t\t',
                 if ( w & 0x20000000) == 0: # u?
                     self.WriteReg( w % 0x10) 
+                    print
                 else:
                     w  %= 0x100000
                     if w & 0x80000 : w = w - 0x100000 
@@ -577,6 +587,5 @@ class Osg:
 
     def Execute( self):
         mcu = Risc()
-        mcu.load( self.code[ :self.pc])
-        mcu.run()
+        mcu.run( self.code, self.pc)
 
