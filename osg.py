@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 '''
   MODULE OSG; #  NW 19.12.94 / 20.10.07 / 26.10.2013*) 
-  IMPORT SYSTEM, Files, Texts, Oberon, oss, RISC;
+
 '''
-import risc, oss
+from risc import Risc
+from oss import Lex, mark
 from collections import namedtuple
 
 MemSize = 8192
@@ -105,18 +106,18 @@ class Osg:
 
     def incR( self):
         if self.rh < SB : self.rh += 1 
-        else: oss.mark("register stack overflow") 
+        else: mark("register stack overflow") 
 
     def checkRegs( self):
         if self.rh != 0 :
-            oss.mark( 'Reg Stack: %d' % self.rh); self.rh = 0
+            mark( 'Reg Stack: %d' % self.rh); self.rh = 0
 
     def setCC( self, item, n): 
         item.mode = eClass.Cond; item.a = 0; item.b = 0; item.r = n
 
     def testRange( self, x): 
         '16-bit entity'
-        if ( x > 0xFFFF) or (x < - 0x10000) : oss.mark( "value too large")
+        if ( x > 0xFFFF) or (x < - 0x10000) : mark( "value too large")
 
     def negated( self, cond):
         cond = cond+8 if cond < 8 else cond-8 
@@ -146,7 +147,7 @@ class Osg:
                 self.Put2( Ldw, self.rh, self.rh, 0); 
                 item.r = self.rh; self.incR()
             elif item.mode == eClass.Const :
-                if (item.a >= 0x10000) or (item.a < -0x10000) : oss.mark( 'const too large') 
+                if (item.a >= 0x10000) or (item.a < -0x10000) : mark( 'const too large') 
                 self.Put1( Mov, self.rh, 0, item.a) 
                 item.r = self.rh; self.incR()
             elif item.mode == eClass.RegI : self.Put2( Ldw, item.r, item.r, item.a)
@@ -172,7 +173,7 @@ class Osg:
             item.r = self.rh; self.incR()
         elif (item.mode == RegI) & (item.a != 0) : 
             self.Put1(Add, item.r, item.r, item.a)
-        else: oss.mark( 'address error')         
+        else: mark( 'address error')         
         item.mode = Reg
 
     def loadCond( self, item): 
@@ -185,7 +186,7 @@ class Osg:
                 self.Put1( Cmp, item.r, item.r, 0)
                 item.r = NE; self.rh -= 1
             item.mode = eClass.Cond; item.a = 0; item.b = 0
-        else: oss.mark( 'not Boolean')
+        else: mark( 'not Boolean')
 
     def merged( self, L0, L1): # longints
         if L0 != 0 :
@@ -213,7 +214,7 @@ class Osg:
         'make an item out of an object'
         item.mode = obj.class_; item.type = obj.type; item.a = obj.value; item.r = obj.lev;
         if obj.class_ == eClass.Par : item.b = 0 
-        if (obj.lev > 0) & (obj.lev != curlev) & (obj.class_ != eClass.Const) : oss.mark( 'level error') 
+        if (obj.lev > 0) & (obj.lev != curlev) & (obj.class_ != eClass.Const) : mark( 'level error') 
 
     def Field( self, item, obj): # item:Item obj:Object
         'item = item.obj'
@@ -228,7 +229,7 @@ class Osg:
     def Index( self, xItem, yItem):
         'xItem = xItem[ yItem]'
         if yItem.mode == eClass.Const :
-            if ( yItem.a < 0) or (yItem.a >= xItem.type.len) : oss.mark("bad index") 
+            if ( yItem.a < 0) or (yItem.a >= xItem.type.len) : mark("bad index") 
             if xItem.mode == eClass.Par : 
                 self.Put2( Ldw, self.rh, item.r, item.a); 
                 xItem.mode = RegI; 
@@ -300,9 +301,9 @@ class Osg:
             self.Put0( Sub, x.r, self.rh, x.r)
         return x
 
-    def AddOp( self, op): 
+    def AddOp( self, op, x, yItem): 
         'x = x +/- yItem'
-        if op == oss.plus :
+        if op == Lex.plus :
             if (x.mode == eClass.Const) & (yItem.mode == eClass.Const) : 
                 x.a = x.a + yItem.a
             elif yItem.mode == eClass.Const : 
@@ -313,7 +314,7 @@ class Osg:
                 self.load( x); self.load( yItem); 
                 self.Put0( Add, self.rh-2, x.r, yItem.r)
                 self.rh -= 1; x.r = self.rh-1
-        else: # op = oss.minus
+        else: # op = Lex.minus
             if (x.mode == eClass.Const) & (yItem.mode == eClass.Const) : 
                 x.a = x.a - yItem.a
             elif yItem.mode == eClass.Const : 
@@ -345,10 +346,10 @@ class Osg:
             self.rh -= 1; x.r = self.rh-1
 
     def DivOp(self, op, x, yItem): #( LONGINT; VAR x, yItem: Item);   #  x = x op yItem *)
-        if op == oss.div :
+        if op == Lexdiv :
             if (x.mode == eClass.Const) & (yItem.mode == eClass.Const) :
               if yItem.a > 0 : x.a = x.a / yItem.a 
-              else: oss.mark( 'bad divisor') 
+              else: Lex.mark( 'bad divisor') 
             elif (yItem.mode == eClass.Const) & (yItem.a == 2) : 
                 self.load( x); 
                 self.Put1( Asr, x.r, x.r, 1)
@@ -356,15 +357,15 @@ class Osg:
                 if yItem.a > 0 : 
                     self.load( x)
                     self.Put1( Div, x.r, x.r, yItem.a) 
-                else: oss.mark( 'bad divisor') 
+                else: Lex.mark( 'bad divisor') 
             else: 
                   self.load( yItem); self.load( x)
                   self.Put0( Div, self.rh-2, x.r, yItem.r)
                   self.rh -= 1; x.r = self.rh-1
-        else:   # op = oss.mod
+        else:   # op = Lex.mod
             if (x.mode == Const) & (yItem.mode == Const) :
                 if yItem.a > 0 : x.a = x.a % yItem.a 
-                else: oss.mark( 'bad modulus') 
+                else: Lex.mark( 'bad modulus') 
             elif (yItem.mode == Const) & (yItem.a == 2) : 
                 self.load( x)
                 self.Put1( And, x.r, x.r, 1)
@@ -373,7 +374,7 @@ class Osg:
                       self.load( x); 
                       self.Put1( Div, x.r, x.r, yItem.a); 
                       self.Put0( Mov+U, x.r, 0, 0) 
-                else: oss.mark( 'bad modulus') 
+                else: mark( 'bad modulus') 
             else: 
                 self.load( yItem); self.load( x)
                 self.Put0( Div, self.rh-2, x.r, yItem.r)
@@ -390,7 +391,7 @@ class Osg:
             self.load( xItem); self.load( yItem)
             self.Put0( Cmp, xItem.r, xItem.r, yItem.r)
             self.rh -= 2 
-        self.setCC( xItem, self.relmap[op - oss.Lex.eql])
+        self.setCC( xItem, self.relmap[op - Lex.eql])
 
 
     def Store( self, x, yItem):  #  x <= yItem 
@@ -436,19 +437,20 @@ class Osg:
   
     def CFJump( self, item): 
         'conditional forward jump'
-        if item.mode != eClass.Cond : item = self.loadCond( item) 
+        if item.mode != eClass.Cond : self.loadCond( item) 
         r = self.negated( item.r)
         self.Put3( 2, r, item.a); 
         self.fixLink( item.b); item.a = self.pc-1
 
-    def FJump( self, L): 
+    def FJump( self, L): # -> L
         'unconditional forward jump'
-        self.Put3( 2, 7, L); L = self.pc-1
+        self.Put3( 2, 7, L); 
+        return self.pc-1
 
     def CBJump( self, item, L):
         'conditional backward jump'
-        if item.mode != Cond : item = self.loadCond(item) 
-        self.Put3( 2, self.negated(item.r), L- self.pc-1)
+        if item.mode != eClass.Cond : item = self.loadCond( item) 
+        self.Put3( 2, self.negated( item.r), L- self.pc-1)
     
     def BJump( self, L): 
         'unconditional backward jump'
@@ -523,15 +525,14 @@ class Osg:
 
     def WriteReg( self, r):
         if r < 13 :    print 'R%d' % r,
-        elif r == 13 : print 'SB',
+        elif r == 13 : print 'FP',
         elif r == 14 : print 'SP',
         elif r == 15 : print 'LNK',
   
     def Decode( self):
         print 'Decode:'
-        print '%04X %04X ' % ( self.code[ 0], self.code[ 1])
         i = 0;
-        while i < self.pc :
+        while i < self.pc:
             w = self.code[ i]
             a = w / 0x1000000 % 0x10
             b = w / 0x100000 % 0x10
@@ -541,9 +542,9 @@ class Osg:
                 print self.mnemo0[ op],  
                 print '\t',
                 self.WriteReg( a)
-                self.WriteReg( b)
+                if op != Mov : self.WriteReg( b)
                 if (w & 0x40000000) == 0 : # ~q 
-                    WriteReg( w % 0x10) 
+                    self.WriteReg( w % 0x10) 
                 else: 
                     c = w % 0x10000
                     if (w & 0x10000000) != 0: # v sign extends
@@ -555,7 +556,8 @@ class Osg:
                 print '\t',
                 self.WriteReg( a)
                 self.WriteReg( b) 
-                print  hex( w % 0x100000)
+                print '[%x]' %  (w % 0x100000)
+
             else:        # Branch instr
                 mnem = 'B'
                 if ( w & 0x10000000) != 0 : mnem += 'L'
@@ -565,13 +567,16 @@ class Osg:
                 if ( w & 0x20000000) == 0: # u?
                     self.WriteReg( w % 0x10) 
                 else:
-                    w %= 0x1000000
-                    if w >= 0x800000 : w = w - 0x1000000 
-                    print w      
+                    w  %= 0x100000
+                    if w & 0x80000 : w = w - 0x100000 
+                    if w >= 0 : print '+',
+                    print hex( w)      
             i += 1
         print
 
 
     def Execute( self):
-        risc.run( self.code, self.pc)
+        mcu = Risc()
+        mcu.load( self.code[ :self.pc])
+        mcu.run()
 

@@ -2,6 +2,8 @@
 '''
   MODULE RISC;  (* NW 22.9.07 / 15.12.2013 *)
 '''
+import time
+
 MEMLEN = 1024  # in words
 REGNUM = 16     
 OPCNUM = 16
@@ -40,9 +42,10 @@ class Risc:
         return (pquv << 28) | (a << 24) | (b << 20) | (op << 16) | c
 
     def printState( self, pc):
-        print 'pc=', pc * 4, 
+        print 'pc=', hex(pc) , 
         print 'SP=', self.R[14],
         print 'FP=', self.R[13],
+        print 'R0=', hex(self.R[0]),
         print 'R1=', hex(self.R[1]), 
         print 'R2=', hex(self.R[2])
 
@@ -52,8 +55,10 @@ class Risc:
         self.R[ FP] = pc
         H = N = Z = 0
         EOF = False
+        print 'RUN:'
         while True: 
-            self.printState( pc) # dbg
+            # self.printState( pc) # dbg
+            time.sleep(.25)
             ir = self.M[ pc] 
             pc += 1
             p = (ir >> 31) & 1
@@ -72,9 +77,7 @@ class Risc:
                 elif v == 0 : 
                     C = im                                      # not sign extended
                 else:       
-                    print im, hex(im)
                     C = im - 0x10000 if im > 0x8000 else  im   # sign extension 
-                    print C, hex(C)
                 if op == self.MOV: A = C if u == 0 else H 
                 elif op == self.LSL: A = B << C
                 elif op == self.ASR: A = B >> C
@@ -83,7 +86,7 @@ class Risc:
                 elif op == self.ANN: A = B & ~C
                 elif op == self.IOR: A = B | C
                 elif op == self.XOR: A = B ^ C
-                elif op == self.ADD: A = B + C
+                elif op == self.ADD: A = B + C ; #print '(A, B, C)', A, B, C
                 elif op == self.SUB: A = B - C
                 elif op == self.MUL: A = B * C
                 elif op == self.DIV: A = B / C; H = B % C
@@ -91,36 +94,36 @@ class Risc:
 
             elif q == 0 :       # memory load / store
                 off = ir & OFFMASK; 
-                adr = ( self.R[b] + off) / 4
-                # if adr &  0x2000 sign 
+                adr = ( self.R[b] + off)
                 if u == 0 : 
-                    if adr < 0 :  # load
+                    if adr >= 0:  # load
                         self.R[a] = self.M[ adr]; 
                     else:  # input
-                        if adr == -1 : # hex input 
+                        if adr == -4 : # hex input 
                             s = raw_input( '>'); 
                             try: self.R[a] = int( s, base=16)
                             except ValueError: self.R[a] = 0; EOF = True
-                        elif adr == -2 : # test eof
+                        elif adr == -8 : # test eof
                             Z = EOF
                 else:
                     if adr >= 0 : # store
-                        print 'adr=', hex(adr), 'a =', a
                         self.M[ adr] = self.R[a]
                     else: # output
-                        if   adr == -1 : print hex( self.R[a]),
-                        elif adr == -2 : print chr( self.R[a] & 0x7F),
-                        elif adr == -3 : print
+                        if   adr == -4 : print '>', hex( self.R[a]),
+                        elif adr == -8 : print chr( self.R[a] & 0x7F),
+                        elif adr == -12 : print '\n>'
 
             else:               # branch instructions
                 if  (a == self.MI) and N or (a == self.EQ) and Z or (a == self.LS) and N or (a == self.LE) and (N or Z) or (a == self.TR) or \
-                    (a == self.NE) and not N or (a == self.NE) and not Z or (a == self.GE) and not N or (a == self.GT) and not (N or Z) :
+                    (a == self.NE) and not Z or (a == self.GE) and not N or (a == self.GT) and not (N or Z) : #(a == self.NE) and not N or 
                     if v == 1 :  self.R[SP] = pc * 4 
                     if u == 1 :  
-                        pc = (pc + (ir & JMPMASK)) & 0x3FFFF 
+                        rel = ir & OFFMASK
+                        if rel & (1<<19) : rel = rel - (1<<20)
+                        pc = pc + rel 
                     else: 
                         pc = self.R[ir & REGMASK] / 4
-            if pc == 0: return
+            if pc == 0: print 'STOP'; return
   
     def load( self, code):
         self.M = code[:]

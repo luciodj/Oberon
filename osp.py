@@ -143,8 +143,8 @@ def factor( sym, xItem): # -> sym
         if sym != Lex.rparen : sym = expression1( sym, xItem) 
         Check(Lex.rparen, 'no )')
     elif sym == Lex.not_ : sym = lex.get(); sym = factor( sym, xItem); CheckBool(xItem); osg.Not(xItem)
-    elif sym == Lex.false_ : sym = lex.get(); gen.MakeConstItem( xItem, boolType, 0)
-    elif sym == Lex.true_ : sym = lex.get(); gen.MakeConstItem( xItem, boolType, 1)
+    elif sym == Lex.false_ : gen.MakeConstItem( xItem, boolType, 0); sym = lex.get()
+    elif sym == Lex.true_ :  gen.MakeConstItem( xItem, boolType, 1); sym = lex.get()
     else: mark( 'factor?'); gen.MakeItem( xItem, dummy, level)
     return sym
 
@@ -162,6 +162,7 @@ def term( sym, xItem): # -> sym
     return sym
 
 def SimpleExpression( sym, xItem): # sym
+    yItem = osg.Item()
     if sym == Lex.plus : sym = lex.get(); sym = term( sym, xItem); CheckInt( xItem)
     elif sym == Lex.minus : sym = lex.get(); sym = term( sym, xItem); CheckInt( xItem); osg.Neg( xItem)
     else: 
@@ -169,8 +170,14 @@ def SimpleExpression( sym, xItem): # sym
     # import pdb; pdb.set_trace()
     while ( sym >= Lex.plus) and ( sym <= Lex.or_) :
         op = sym; sym = lex.get();
-        if op == Lex.or_ : osg.Or1( xItem); CheckBool( xItem); sym = term( sym, yItem); CheckBool( yItem); osg.Or2( xItem, yItem)
-        else: CheckInt( xItem); sym = term( sym, yItem); CheckInt( yItem); osg.AddOp(op, xItem, yItem)
+        if op == Lex.or_ : 
+            gen.Or1( xItem); CheckBool( xItem)
+            sym = term( sym, yItem); CheckBool( yItem)
+            gen.Or2( xItem, yItem)
+        else: 
+            CheckInt( xItem)
+            sym = term( sym, yItem); CheckInt( yItem)
+            gen.AddOp(op, xItem, yItem)
     return sym
 
 def expression( sym, xItem): # -> sym
@@ -236,14 +243,14 @@ def StatSequence( sym):
             sym = Check( sym, Lex.then, 'no :')
             sym = StatSequence( sym); L = 0
             while sym == Lex.elsif :
-                sym = lex.get(); gen.FJump(L); gen.fixLink( xItem.a)
+                sym = lex.get(); L = gen.FJump( L); gen.fixLink( xItem.a)
                 sym = expression( sym, xItem); CheckBool( xItem); 
                 gen.CFJump( xItem);
                 if sym == Lex.then : sym = lex.get() 
                 else: mark(':?') 
                 StatSequence
             if sym == Lex.else_ :
-                sym = lex.get(); gen.FJump(L); gen.fixLink(xItem.a); StatSequence
+                sym = lex.get(); L = gen.FJump( L); gen.fixLink(xItem.a); StatSequence
             else: gen.fixLink(xItem.a)    
             gen.fixLink(L);
             if sym == Lex.end : sym = lex.get() 
@@ -380,6 +387,7 @@ def FPSection( sym, adr, nofpar):
     return sym
 
 def ProcedureDecl( sym):
+    global level;
     marksize = 4;
     # ProcedureDecl  
     sym = lex.get();
@@ -416,6 +424,7 @@ def ProcedureDecl( sym):
     return sym
 
 def Module( sym):
+    global level
     if sym == Lex.module_ :
         sym = lex.get();
         if sym == Lex.times : 
@@ -453,8 +462,6 @@ def Module( sym):
             return False
 
 def Compile():
-    # Oberon.GetSelection(T, beg, end, time);
-    # if time >= 0 : Lex.Init(T, beg); 
     sym = lex.get()
     return Module( sym) 
 

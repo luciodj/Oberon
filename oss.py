@@ -1,13 +1,10 @@
-#!/usrbin/env python
+#!/usr/bin/env python
 """ 
-    MODULE ORS; (* NW 19.9.93 / 1.4.2014  Scanner in Oberon-07 *)
-    IMPORT SYSTEM, Texts, Oberon;
+    MODULE OSS; (* NW 19.9.93 / 1.4.2014  Scanner in Oberon-07 *)
 
-    Oberon Scanner does lexical analysis. Input is Oberon-Text, output is
-    sequence of symbols, i.e identifiers, numbers, strings, and special symbols.
-    Recognises all Oberon keywords and skips comments. The keywords are
-    recorded in a table.
-    get() delivers self.next symbol from input file
+    Lexical Scanner  Input is Text, output is a sequence of symbols, i.e identifiers, numbers, strings, and special symbols.
+    Recognises all keywords and skips comments. The keywords are recorded in a table.
+    getsym() delivers self.next symbol from input file
     mark(msg) records error and delivers error message stdout
     If get delivers ident, then the identifier (a string) is in variable id, if int or char
     in ival, if real in rval, and if string in str
