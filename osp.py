@@ -9,6 +9,7 @@ from osg import Osg, eClass, eForm
 from oss import Lex, Lexer, mark, getErrcnt
 
 level = 0
+WordSize = 4
 
 def newObj( name, clss): # -> objDesc
     scope = universe[0]
@@ -74,34 +75,34 @@ def selector( sym, xItem): # osg.Item
             else: mark( 'ident?')      
     return sym
 
-def compTypes( t0, t1): # (osg.Type): # -> BOOLEAN;
-    'Compatible Types'
+def compTypes( t0, t1): 
+    'compare types'
     return (t0 == t1) or \
-           (t0.form == osg.Array) and (t1.form == osg.Array) and CompTypes( t0.base, t1.base)
+           (t0.form == eForm.Array) and (t1.form == eForm.Array) and CompTypes( t0.base, t1.base)
 
 
 def parameter( sym, par): # osg.Object
-    xItem = Item()
+    xItem = osg.Item()
     sym = expression( sym, xItem)
     varpar = par.class_ == eClass.Par
-    if CompTypes( par.type, xItem.type) :
-        if not varpar : osg.ValueParam( xItem)
-        else: osg.VarParam( xItem, par.type)
-    elif ( xItem.type.form == osg.Array) and (par.type.form == osg.Array) and \
-    ( xItem.type.base.form == par.type.base.form) and (par.type.len < 0) :
-        osg.OpenArrayParam( xItem)
+    if compTypes( par.type, xItem.type) :
+        if not varpar : gen.ValueParam( xItem)
+        else: gen.VarParam( xItem, par.type)
+    elif ( xItem.type.form == eForm.Array) and (par.type.form == eForm.Array) and \
+        ( xItem.type.base.form == par.type.base.form) and (par.type.len < 0) :
+        gen.OpenArrayParam( xItem)
     else: mark('incompatible parameters')
     return sym
   
 def paramList( sym, obj): # osg.Object
-    par = obj.params
-    if sym != Lex.rparen :
-        for par in obj.idents:
-            sym = parameter( sym, par)
-            if sym <= Lex.comma :
-                sym = check( sym, Lex.Comma, 'comma? too many parameters')
-        sym = check( sym, Lex.rparen, ') missing')
-    else: sym = lex.get();
+    pars = obj.params
+    # print '\nexpecting %d parameters' % obj.nofpar
+    # print pars
+    for x in xrange( obj.nofpar):
+        sym = parameter( sym, pars[ x])
+        if (x < obj.nofpar-1) :
+            sym = check( sym, Lex.Comma, 'expecting a comma ?')
+    sym = check( sym, Lex.rparen, ') missing')
     return sym
 
 def sysFunc( sym, xItem, fctno): 
@@ -200,7 +201,7 @@ def sysProc( sym, pno):
     else: mark( 'no rparen') 
     return sym
 
-def StatSequence( sym):
+def statSequence( sym):
     global level
     xItem = osg.Item()
     yItem = osg.Item()
@@ -223,31 +224,32 @@ def StatSequence( sym):
                 elif sym == Lex.eql : mark( 'should be =='); sym = lex.get(); sym = expression( sym, yItem)
                 elif sym == Lex.lparen : # procedure call
                     sym = lex.get();
-                    if (obj.class_ == gen.Proc) and (obj.type == None) : sym = paramList( sym, obj); gen.Call(obj);
+                    if (obj.class_ == eClass.Proc) and (obj.type == None) : sym = paramList( sym, obj); gen.Call(obj);
                     else: mark('not a procedure')
                 elif obj.class_ == eClass.Proc :               # procedure call without parameters
                     if obj.nofpar > 0 : mark( 'missing parameters') 
                     if not obj.type : gen.Call(obj) 
                     else: mark( 'not a procedure') 
                 elif (obj.class_ == eClass.SProc) and ( obj.value == 3) : gen.WriteLn()
-                elif obj.class_ == eClass.Typ : mark( 'illegal assignment')
+                elif obj.class_ == eClass.Type : mark( 'illegal assignment')
                 else: mark( 'not a procedure')
 
         elif sym == Lex.if_ :
             sym = lex.get(); sym = expression( sym, xItem); checkBool( xItem)
             gen.CFJump( xItem)
             sym = check( sym, Lex.then, 'no :')
-            sym = StatSequence( sym); L = 0
+            sym = statSequence( sym); L = 0
             while sym == Lex.elsif :
                 sym = lex.get(); L = gen.FJump( L); gen.fixLink( xItem.a)
-                sym = expression( sym, xItem); checkBool( xItem); 
-                gen.CFJump( xItem);
+                sym = expression( sym, xItem); checkBool( xItem) 
+                gen.CFJump( xItem)
                 if sym == Lex.then : sym = lex.get() 
                 else: mark(':?') 
-                StatSequence
+                statSequence
             if sym == Lex.else_ :
-                sym = lex.get(); L = gen.FJump( L); gen.fixLink(xItem.a); statSequence
-            else: gen.fixLink(xItem.a)    
+                sym = lex.get(); L = gen.FJump( L); gen.fixLink(xItem.a) 
+                sym = statSequence( sym)
+            else: gen.fixLink( xItem.a)    
             gen.fixLink( L);
             if sym == Lex.end : sym = lex.get() 
             else: mark('END ?') 
@@ -256,12 +258,13 @@ def StatSequence( sym):
             sym = lex.get(); L = gen.pc 
             sym = expression( sym, xItem); checkBool( xItem)
             gen.CFJump( xItem)
-            check(Lex.do, 'no :'); sym = statSequence( sym) 
+            check( Lex.do, 'no :'); sym = statSequence( sym) 
             gen.BJump( L); gen.fixLink( xItem.a)
             check( Lex.end, 'no END')
 
         elif sym == Lex.repeat :
-            sym = lex.get(); L = osg.pc; sym = statSequence( sym)
+            sym = lex.get(); L = gen.pc
+            sym = statSequence( sym)
             if sym == Lex.until :
                 sym = lex.get(); sym = expression( sym, xItem); checkBool( xItem)
                 gen.CBJump( xItem, L)
@@ -292,7 +295,7 @@ def typeDef( sym): #  -> sym, type
             if ( sym == Lex.ident) or ( sym >= Lex.array) : break
     if sym == Lex.ident :
         obj = find( lex.value); sym = lex.get()
-        if obj.class_ == eClass.Typ : typed = obj.type
+        if obj.class_ == eClass.Type : typed = obj.type
         else: mark( 'type?') 
     elif sym == Lex.array :
         xItem = osg.Item()
@@ -347,7 +350,7 @@ def declarations( sym, varsize): # -> sym, varsize
     if sym == Lex.type :
         sym = lex.get();
         while sym == Lex.ident :
-            obj = newObj( lex.value, eClass.Typ); 
+            obj = newObj( lex.value, eClass.Type); 
             sym = lex.get()
             if sym == Lex.eql : sym = lex.get() 
             else: mark('=?')  
@@ -375,11 +378,11 @@ def formalParametersSection( sym, adr, nofpar):
     if sym == Lex.var : sym = lex.get(); sym = identList( sym, iList, eClass.Par)
     else: sym = identList( sym, iList, eClass.Var)
     if sym == Lex.ident :
-        find(obj); sym = lex.get();
+        obj = find( lex.value); sym = lex.get();
         if obj.class_ == eClass.Type : tp = obj.type 
-        else: mark( 'type?'); tp = intType 
+        else: mark( 'type?'); tp = intType  
     else: mark( 'ident?'); tp = intType
-    if first.class_ == eClass.Var :
+    if iList[0].class_ == eClass.Var :
         parsize = tp.size
         if tp.form >= eForm.Array : mark( 'no struct params') 
     else: parsize = WordSize # var are references/pointers
@@ -388,16 +391,15 @@ def formalParametersSection( sym, adr, nofpar):
         obj.type = tp
         obj.level = level
         obj.value = adr; adr += parsize;
-        obj = obj.next 
-    return sym, nofpar
+    return sym, adr, nofpar
 
 def procedureDecl( sym):
     global level
     marksize = 4;
     sym = lex.get();
     if sym == Lex.ident :
-        procid = Lex.id
-        obj = newObj( lex.value, proc, eClass.Proc); sym = lex.get()
+        procid = lex.value
+        proc = newObj( name=lex.value, clss=eClass.Proc); sym = lex.get()
         parblksize = marksize
         nofpar = 0
         openScope( 'function')  
@@ -414,26 +416,31 @@ def procedureDecl( sym):
                     sym, parblksize, nofpar = formalParametersSection( sym, parblksize, nofpar) 
                 if sym == Lex.rparen : sym = lex.get() 
                 else: mark(')?')
-        locblksize = parblksize; proc.type = None; proc.dsc = topScope.next; proc.nofpar = nofpar;
+        locblksize = parblksize
+        proc.type = None
+        proc.nofpar = nofpar
+
         sym = check( sym, Lex.semicolon, '; expected');
-        sym = Declarations( sym, locblksize); proc.dsc = topScope.next;
+        sym, locblksize = declarations( sym, locblksize)
+        proc.params = universe[ 0].idents
         while sym == Lex.procedure :
-            sym = ProcedureDecl( sym); sym = check( sym, Lex.semicolon, '; expected')   
-        proc.val = osg.pc; gen.Enter( parblksize, locblksize);
-        if sym == Lex.begin : sym = lex.get(); sym = StatSequence( sym) 
+            sym = procedureDecl( sym); 
+            sym = check( sym, Lex.semicolon, '; expected')   
+        proc.value = gen.pc; gen.Enter( parblksize, locblksize)
+        if sym == Lex.begin : sym = lex.get(); sym = statSequence( sym) 
         sym = check( sym, Lex.end, 'no END')
         if sym == Lex.ident :
-            if procid != Lex.id : mark('no match') 
+            if procid != lex.value : mark('no match') 
             sym = lex.get()   
         gen.Return( locblksize)
-        level -= 1; 
+        level -= 1
         closeScope()
     return sym
 
 def Module( sym):
     global level
     if sym == Lex.module_ :
-        sym = lex.get();
+        sym = lex.get()
         if sym == Lex.times : 
             tag = 1
             sym = lex.get() 
@@ -443,15 +450,15 @@ def Module( sym):
         dc = 0
         level = 0
         if sym == Lex.ident :
-            modid = lex.value; 
+            modid = lex.value
             sym = lex.get()
             print 'Compiling module:', modid
         else: mark('ident?')
         sym = check( sym, Lex.semicolon, '; expected')
         sym, dc = declarations( sym, dc)
-        while sym == Lex.procedure : sym = ProcedureDecl( sym); sym = check( sym, Lex.semicolon, '; expected') 
+        while sym == Lex.procedure : sym = procedureDecl( sym); sym = check( sym, Lex.semicolon, '; expected') 
         gen.Header( dc);
-        if sym == Lex.begin : sym = lex.get(); sym = StatSequence( sym) 
+        if sym == Lex.begin : sym = lex.get(); sym = statSequence( sym) 
         sym = check( sym, Lex.end, 'no END')
         if sym == Lex.ident :
             if modid != lex.value : Lex.mark( 'no match') 
@@ -489,7 +496,7 @@ def parse( instream):
     print 'Oberon-0 Compiler'
     print
     lex = Lexer( instream)
-    universe = []; topScope = 0 
+    universe = []
     level = 0
     openScope( 'root')
     addBuiltin( 'eot', eClass.SFunc, 1, boolType)
@@ -498,12 +505,12 @@ def parse( instream):
     addBuiltin( 'WriteChar', eClass.SProc, 2, None)
     addBuiltin( 'WriteLn', eClass.SProc, 3, None)
     addBuiltin( 'ORD', eClass.SFunc, 0, intType)
-    addBuiltin( 'BOOLEAN', eClass.Typ, 0, boolType)
-    addBuiltin( 'INTEGER', eClass.Typ, 1, intType)
+    addBuiltin( 'BOOLEAN', eClass.Type, 0, boolType)
+    addBuiltin( 'INTEGER', eClass.Type, 1, intType)
     return Compile()
 
 lex = None
-universe = []; topScope = 0 
+universe = []
 level = 0
 gen = Osg()
 boolType = osg.TypeDesc( 'Bool', form = eForm.Boolean, size = 4)

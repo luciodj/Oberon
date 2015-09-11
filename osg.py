@@ -12,10 +12,10 @@ WordSize = 4
 
 class eClass:
     strings = [ 'Const', 'Var', 'Par', 'Field', 'Type', 'SProc', 'SFunc', 'Proc', 'NoTyp', 'Reg', 'RegI', 'Cond']
-    Const, Var, Par, Field, Typ, SProc, SFunc, Proc, NoTyp, Reg, RegI, Cond = range( 12)
+    Const, Var, Par, Field, Type, SProc, SFunc, Proc, NoTyp, Reg, RegI, Cond = range( 12)
 
 # reserved registers
-SB = 13; SP = 14; LNK = 15;   
+BP = 13; SP = 14; LNK = 15;   
 
 class eForm: # forms enum
     Boolean, Integer, Array, Record = range( 4)
@@ -49,14 +49,13 @@ class ObjDesc :
     def __init__( self, name='', cl=eClass.Const):
         self.name = name
         self.class_ =  cl   # enum eClass
-        self.lev = 0        # integer
+        self.level = 0        # integer
         self.type = None    # TypeDesc obj
         self.value = 0 
         self.params = None
         self.nofpar = 0
-    
     def __repr__( self):
-        return 'ObjDesc %s: %s value=%s, nofpar=%s, type=%s\n\r' % \
+        return 'ObjDesc %s: %s value=%s, nofpar=%s, type:[%s]\n\r' % \
                 ( self.name, eClass.strings[self.class_], self.value, self.nofpar, self.type)
 
 class TypeDesc:
@@ -70,11 +69,11 @@ class TypeDesc:
         self.len = 0         # number of elements (array)
     def __repr__( self):
         if self.form == eForm.Array:
-            return 'TypeDesc %s: form=%s, size=%s, base=%s' % \
-                    ( self.name, 'Array', self.size, self.base)
+            return 'TypeDesc %s: form=%s, len=%s, base=%s, size=%s' % \
+                    ( self.name, 'Array', self.len, self.base, self.size)
         elif self.form == eForm.Record:
-            return 'TypeDesc %s: form=%s, size=%s, fields=%s' % \
-                    ( self.name, 'Record', self.size, self.fields)
+            return 'TypeDesc %s: form=%s, fields=%s, size=%s' % \
+                    ( self.name, 'Record', self.fields, self.size)
         else:
             return 'TypeDesc %s: form=%s, size=%s' % \
                     ( self.name, self.form, self.size)
@@ -114,7 +113,7 @@ class Osg:
         self.pc += 1
 
     def incR( self):
-        if self.rh < SB : self.rh += 1 
+        if self.rh < BP : self.rh += 1 
         else: mark("register stack overflow") 
 
     def checkRegs( self):
@@ -149,10 +148,10 @@ class Osg:
                 if item.r > 0 : # local
                     self.Put2( Ldw, self.rh, SP, item.a) 
                 else:   # global 
-                    self.Put2( Ldw, self.rh, SB, item.a) 
+                    self.Put2( Ldw, self.rh, BP, item.a) 
                 item.r = self.rh; self.incR()
             elif item.mode == eClass.Par : 
-                self.Put2( Ldw, self.rh, item.r, item.a); 
+                self.Put2( Ldw, self.rh, SP, item.a)   # item.r, item.a); 
                 self.Put2( Ldw, self.rh, self.rh, 0); 
                 item.r = self.rh; self.incR()
             elif item.mode == eClass.Const :
@@ -169,21 +168,21 @@ class Osg:
     
     def loadAdr( self, item): 
         'emits load of the address of an item'
-        if item.mode == Var :
+        if item.mode == eClass.Var :
             if item.r > 0 : # local
                 self.Put1(Add, self.rh, SP, item.a); 
                 item.r = self.rh 
             else:   # global
-                self.Put1(Add, self.rh, SB, item.a) 
+                self.Put1(Add, self.rh, BP, item.a) 
             self.incR()
-        elif item.mode == Par: 
+        elif item.mode == eClass.Par: 
             self.Put2(Ldw, self.rh, SP, item.a); 
             self.Put1(Add, self.rh, self.rh, item.b); 
             item.r = self.rh; self.incR()
-        elif (item.mode == RegI) & (item.a != 0) : 
+        elif (item.mode == eClass.RegI) & (item.a != 0) : 
             self.Put1(Add, item.r, item.r, item.a)
         else: mark( 'address error')         
-        item.mode = Reg
+        item.mode = eClass.Reg
 
     def loadCond( self, item): 
         'emits load of a boolean item'
@@ -221,9 +220,9 @@ class Osg:
 
     def MakeItem( self, item, obj, curlev): 
         'make an item out of an object'
-        item.mode = obj.class_; item.type = obj.type; item.a = obj.value; item.r = obj.lev;
+        item.mode = obj.class_; item.type = obj.type; item.a = obj.value; item.r = obj.level;
         if obj.class_ == eClass.Par : item.b = 0 
-        if (obj.lev > 0) & (obj.lev != curlev) & (obj.class_ != eClass.Const) : mark( 'level error') 
+        if (obj.level > 0) & (obj.level != curlev) & (obj.class_ != eClass.Const) : mark( 'level error') 
 
     def Field( self, item, obj): # item:Item obj:Object
         'item = item.obj'
@@ -252,7 +251,7 @@ class Osg:
                 else: self.Put1( Mul, yItem.r, yItem.r, s) 
             if xItem.mode == Var :
                 if xItem.r > 0 : self.Put0( Add, yItem.r, SP, yItem.r) 
-                else: self.Put0( Add, yItem.r, SB, yItem.r) 
+                else: self.Put0( Add, yItem.r, BP, yItem.r) 
                 xItem.mode = eClass.RegI; 
                 xItem.r = yItem.r
             elif xItem.mode == eClass.Par :
@@ -409,7 +408,7 @@ class Osg:
             if x.r > 0 : # local
                 self.Put2( Stw, yItem.r, SP, x.a) 
             else: 
-                self.Put2( Stw, yItem.r, SB, x.a) 
+                self.Put2( Stw, yItem.r, BP, x.a) 
         elif x.mode == eClass.Par : 
             self.Put2( Ldw, self.rh, SP, x.a); 
             self.Put2( Stw, yItem.r, self.rh, x.b)
@@ -420,9 +419,9 @@ class Osg:
         self.rh -= 1
         
 
-    def VarParam( self,  x, ftype): # ( xItem; ftype: Type) -> Item
-        xmd = x.mode; loadAdr(x);
-        if ( ftype.form == Array) and (ftype.len < 0) : # open array
+    def VarParam( self,  x, ftype): 
+        xmd = x.mode; self.loadAdr(x);
+        if ( ftype.form == eForm.Array) and (ftype.len < 0) : # open array
             if x.type.len >= 0 : 
                 self.Put1( Mov, self.rh, 0, x.type.len) 
             else:  
@@ -431,11 +430,11 @@ class Osg:
         elif ftype.form == eForm.Record :
             if xmd == Par : self.Put2( Ldw, self.rh, SP, x.a+4); self.incR() 
 
-    def ValueParam( self, x): # ( x: Item) -> Item
-        return self.load(x)
+    def ValueParam( self, x): 
+        return self.load( x)
 
     def OpenArrayParam( self, x):
-        self.loadAdr(x);
+        self.loadAdr( x);
         if x.type.len >= 0 : 
             self.Put1( Mov, self.rh, 0, x.type.len) 
         else: 
@@ -534,10 +533,16 @@ class Osg:
 
     def WriteReg( self, r):
         if r < 13 :    print 'R%d' % r,
-        elif r == 13 : print 'FP',
+        elif r == 13 : print 'BP',
         elif r == 14 : print 'SP',
         elif r == 15 : print 'LNK',
   
+    # pq
+    # 00uv |  a(4) | b(4) | opcode(4) |  xxxx  | c(4) |  # a = opcode( b, c)
+    # 01uv |  a(4) | b(4) | opcode(4) |     imm(16)   |  # a = opcode( b, imm)
+    # 10uv |  a(4) | b(4) |                 off(20)   |  # load / store
+    # 11uv |cond(4)|         imm(24)                  |  # a = br(cond, imm)
+
     def Decode( self):
         print 'Decode:'
         i = 0;
@@ -573,7 +578,7 @@ class Osg:
                 if a == 7:   mnem += ' '       # (always True)
                 else: mnem += self.mnemo1[ a]   # conditional
                 print mnem +'\t\t',
-                if ( w & 0x20000000) == 0: # u?
+                if ( w & 0x20000000) == 0: # u 
                     self.WriteReg( w % 0x10) 
                     print
                 else:
@@ -585,7 +590,7 @@ class Osg:
         print
 
 
-    def Execute( self):
+    def Execute( self, debug=None):
         mcu = Risc()
-        mcu.run( self.code, self.pc)
+        mcu.run( self.code, self.pc, debug)
 

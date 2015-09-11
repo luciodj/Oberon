@@ -14,10 +14,7 @@ IMMMASK = (1<<16) - 1
 OFFMASK = (1<<20) - 1
 JMPMASK = (1<<24) - 1
 
-FP   = 13
-SP   = 14
-LNK  = 15
-ZERO = 0 
+BP   = 13; SP   = 14; LNK  = 15
 
 def ror( x, bits):
     temp = x & ((1<<bits)-1)
@@ -42,22 +39,22 @@ class Risc:
 
     def printState( self, pc):
         print 'pc=', hex(pc) , 
-        print 'SP=', self.R[14],
-        print 'FP=', self.R[13],
+        print 'SP=', hex(self.R[SP]),
+        print 'BP=', hex(self.R[BP]),
         print 'R0=', hex(self.R[0]),
         print 'R1=', hex(self.R[1]), 
         print 'R2=', hex(self.R[2])
 
-    def run( self, M, size):
+    def run( self, M, size, debug=None):
         pc = 0
         self.R[ SP] = len( M)
-        self.R[ FP] = size
+        self.R[ BP] = size
         H = N = Z = 0
         EOF = False
         print 'RUN:'
         while True: 
-            # self.printState( pc) # dbg
-            time.sleep(.25)
+            if debug : self.printState( pc); time.sleep( debug) 
+            else: print '.',
             ir = M[ pc] 
             pc += 1
             p = (ir >> 31) & 1
